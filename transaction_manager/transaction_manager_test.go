@@ -192,60 +192,60 @@ func TestAbort_WithUndoLog(t *testing.T) {
 }
 
 // TestLockManager_Initialization tests lock manager creation
-// func TestLockManager_Initialization(t *testing.T) {
-// 	lockMgr := NewLockManager()
-//
-// 	if lockMgr == nil {
-// 		t.Fatal("expected lock manager to be non-nil")
-// 	}
-// }
-//
-// // TestLockManager_AcquireSharedLock tests acquiring shared lock
-// func TestLockManager_AcquireSharedLock(t *testing.T) {
-// 	lockMgr := NewLockManager()
-// 	txnMgr := NewTransactionManager(nil)
-// 	txn := txnMgr.Begin()
-//
-// 	key := []byte("resource1")
-// 	err := lockMgr.AcquireSharedLock(txn.GetID(), key)
-// 	if err != nil {
-// 		t.Fatalf("failed to acquire shared lock: %v", err)
-// 	}
-//
-// 	txnMgr.Commit(txn)
-// }
-//
-// // TestLockManager_AcquireExclusiveLock tests acquiring exclusive lock
-// func TestLockManager_AcquireExclusiveLock(t *testing.T) {
-// 	lockMgr := NewLockManager()
-// 	txnMgr := NewTransactionManager(nil)
-// 	txn := txnMgr.Begin()
-//
-// 	key := []byte("resource2")
-// 	err := lockMgr.AcquireExclusiveLock(txn.GetID(), key)
-// 	if err != nil {
-// 		t.Fatalf("failed to acquire exclusive lock: %v", err)
-// 	}
-//
-// 	txnMgr.Commit(txn)
-// }
-//
-// // TestLockManager_ReleaseLock tests releasing lock
-// func TestLockManager_ReleaseLock(t *testing.T) {
-// 	lockMgr := NewLockManager()
-// 	txnMgr := NewTransactionManager(nil)
-// 	txn := txnMgr.Begin()
-//
-// 	key := []byte("resource3")
-// 	lockMgr.AcquireExclusiveLock(txn.GetID(), key)
-//
-// 	err := lockMgr.ReleaseLock(txn.GetID(), key)
-// 	if err != nil {
-// 		t.Fatalf("failed to release lock: %v", err)
-// 	}
-//
-// 	txnMgr.Commit(txn)
-// }
+func TestLockManager_Initialization(t *testing.T) {
+	lockMgr := NewLockManager()
+
+	if lockMgr == nil {
+		t.Fatal("expected lock manager to be non-nil")
+	}
+}
+
+// TestLockManager_AcquireSharedLock tests acquiring shared lock
+func TestLockManager_AcquireSharedLock(t *testing.T) {
+	lockMgr := NewLockManager()
+	txnMgr := NewTransactionManager(nil)
+	txn := txnMgr.Begin()
+
+	key := []byte("resource1")
+	err := lockMgr.LockShared(txn, key)
+	if err != nil {
+		t.Fatalf("failed to acquire shared lock: %v", err)
+	}
+
+	txnMgr.Commit(txn)
+}
+
+// TestLockManager_AcquireExclusiveLock tests acquiring exclusive lock
+func TestLockManager_AcquireExclusiveLock(t *testing.T) {
+	lockMgr := NewLockManager()
+	txnMgr := NewTransactionManager(nil)
+	txn := txnMgr.Begin()
+
+	key := []byte("resource2")
+	err := lockMgr.LockExclusive(txn, key)
+	if err != nil {
+		t.Fatalf("failed to acquire exclusive lock: %v", err)
+	}
+
+	txnMgr.Commit(txn)
+}
+
+// TestLockManager_ReleaseLock tests releasing lock
+func TestLockManager_ReleaseLock(t *testing.T) {
+	lockMgr := NewLockManager()
+	txnMgr := NewTransactionManager(nil)
+	txn := txnMgr.Begin()
+
+	key := []byte("resource3")
+	lockMgr.LockExclusive(txn, key)
+
+	err := lockMgr.Unlock(txn, key)
+	if err != nil {
+		t.Fatalf("failed to release lock: %v", err)
+	}
+
+	txnMgr.Commit(txn)
+}
 
 // TestTransactionManager_SequentialIDs tests that transaction IDs are sequential
 func TestTransactionManager_SequentialIDs(t *testing.T) {

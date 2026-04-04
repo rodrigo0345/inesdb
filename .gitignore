@@ -1,1 +1,4 @@
 omag
+
+*.db
+*.wal
