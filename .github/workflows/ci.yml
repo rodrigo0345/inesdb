@@ -24,12 +24,10 @@ jobs:
       run: go mod download
 
     - name: Run Tests with Coverage
-      # Using /... ensures all sub-packages are included
       run: go test -v -race -coverprofile=coverage.out ./buffermanager/... ./b_tree/... ./transaction_manager/...
 
     - name: Check Coverage Threshold
       run: |
-        # Use awk for the comparison to avoid dependency on 'bc'
         COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
         echo "Total coverage: $COVERAGE%"
         awk -v cov="$COVERAGE" 'BEGIN { if (cov < 80.0) { print "Error: Coverage " cov "% is below 80%"; exit 1 } }'
@@ -44,20 +42,33 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Required to push branches
+
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
         go-version: '1.26.1'
+
+    - name: Create Release Branch
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        BRANCH_NAME="release/v${{ github.run_number }}"
+        git checkout -b $BRANCH_NAME
+        git push origin $BRANCH_NAME
+
     - name: Build Multi-Arch Binaries
       run: |
-        # Build from current directory (.) instead of specific file for better reliability
         GOOS=linux GOARCH=amd64 go build -v -o release-linux-amd64 .
         GOOS=linux GOARCH=arm64 go build -v -o release-linux-arm64 .
+
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
         tag_name: v${{ github.run_number }}
         name: Release v${{ github.run_number }}
+        target_commitish: release/v${{ github.run_number }}
         files: |
           release-linux-amd64
           release-linux-arm64
