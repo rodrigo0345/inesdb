@@ -124,3 +124,61 @@ func (wm *WALManager) Close() error {
 	defer wm.mu.Unlock()
 	return wm.logFile.Close()
 }
+
+// just for debugging
+func (wm *WALManager) ReadAllRecords() ([]WALRecord, error) {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+
+	// Ensure everything is on disk before reading
+	wm.logFile.Sync()
+
+	file, err := os.Open(wm.logFile.Name())
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var records []WALRecord
+
+	for {
+		rec := WALRecord{}
+
+		// 1. Read Fixed-size header (LSN(8) + TxnID(8) + Type(1) + PageID(4) + Offset(2)) = 23 bytes
+		header := make([]byte, 23)
+		_, err := file.Read(header)
+		if err != nil {
+			if err == os.ErrClosed || err.Error() == "EOF" {
+				break
+			}
+			return nil, err
+		}
+
+		rec.LSN = binary.LittleEndian.Uint64(header[0:8])
+		rec.TxnID = binary.LittleEndian.Uint64(header[8:16])
+		rec.Type = RecordType(header[16])
+		rec.PageID = PageID(binary.LittleEndian.Uint32(header[17:21]))
+		rec.Offset = binary.LittleEndian.Uint16(header[21:23])
+
+		// 2. Read Before Image
+		lenBuf := make([]byte, 4)
+		file.Read(lenBuf)
+		beforeLen := binary.LittleEndian.Uint32(lenBuf)
+		if beforeLen > 0 {
+			rec.Before = make([]byte, beforeLen)
+			file.Read(rec.Before)
+		}
+
+		// 3. Read After Image
+		file.Read(lenBuf)
+		afterLen := binary.LittleEndian.Uint32(lenBuf)
+		if afterLen > 0 {
+			rec.After = make([]byte, afterLen)
+			file.Read(rec.After)
+		}
+
+		records = append(records, rec)
+	}
+
+	return records, nil
+}

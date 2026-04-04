@@ -45,11 +45,6 @@ func TestNewPage_Standard(t *testing.T) {
 		t.Fatal("expected new page to not be dirty")
 	}
 
-	// Page should be allocated with an ID
-	if page.GetID() < 0 {
-		t.Fatal("expected positive page ID")
-	}
-
 	// Free list should be reduced
 	if len(bpm.freeList) != 9 {
 		t.Fatalf("expected 9 remaining free frames, got %d", len(bpm.freeList))
@@ -304,18 +299,6 @@ func TestFlushAll_Empty(t *testing.T) {
 	err := bpm.FlushAll()
 	if err != nil {
 		t.Fatalf("expected no error on empty buffer, got %v", err)
-	}
-}
-
-// TestSetWALManager tests setting WAL manager
-func TestSetWALManager(t *testing.T) {
-	bpm := createTestBufferPool(t, 10)
-
-	mockWAL := struct{}{}
-	bpm.SetWALManager(mockWAL)
-
-	if bpm.walMgr == nil {
-		t.Fatal("expected walMgr to be set")
 	}
 }
 

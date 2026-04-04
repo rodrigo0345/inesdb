@@ -32,8 +32,8 @@ type DatabaseTUI struct {
 
 func NewDatabaseTUI() (*DatabaseTUI, error) {
 	// Clean up old files if they exist
-	os.Remove(dbPath)
-	os.Remove(walPath)
+	// os.Remove(dbPath)
+	// os.Remove(walPath)
 
 	// Create disk manager
 	diskMgr, err := buffermanager.NewDiskManager(dbPath)
@@ -64,7 +64,7 @@ func NewDatabaseTUI() (*DatabaseTUI, error) {
 
 	// Create transaction manager
 	txnMgr := transaction_manager.NewTransactionManager(walMgr)
-	
+
 	// CRITICAL: Set the buffer pool on transaction manager so commits flush pages to disk
 	txnMgr.SetBufferPool(bufferPool)
 
@@ -85,22 +85,22 @@ func (db *DatabaseTUI) Close() error {
 	if err := db.bufferPool.FlushAll(); err != nil {
 		return err
 	}
-	
+
 	// Sync disk to ensure everything is persisted
 	if err := db.diskMgr.Sync(); err != nil {
 		return err
 	}
-	
+
 	// Close disk manager
 	if err := db.diskMgr.Close(); err != nil {
 		return err
 	}
-	
+
 	// Close WAL manager
 	if err := db.walMgr.Close(); err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -117,6 +117,7 @@ func (db *DatabaseTUI) printWelcome() {
 	fmt.Println(colorGreen("  [l]") + " List       - Display all entries")
 	fmt.Println(colorGreen("  [c]") + " Count      - Count total entries")
 	fmt.Println(colorGreen("  [t]") + " Stats      - Show database statistics")
+	fmt.Println(colorGreen("  [w]") + " WAL List    - Inspect the Write-Ahead Log")
 	fmt.Println(colorGreen("  [h]") + " Help       - Show this help message")
 	fmt.Println(colorYellow("  [q]") + " Quit       - Exit the program")
 	fmt.Println()
@@ -245,7 +246,7 @@ func (db *DatabaseTUI) list() error {
 		if len(value) > 19 {
 			value = value[:16] + "..."
 		}
-		fmt.Printf(colorCyan("| ") + "%-32s " + colorCyan("| ") + "%-19s " + colorCyan("|\n"), key, value)
+		fmt.Printf(colorCyan("| ")+"%-32s "+colorCyan("| ")+"%-19s "+colorCyan("|\n"), key, value)
 		count++
 		cursor.Next()
 	}
@@ -285,6 +286,47 @@ func (db *DatabaseTUI) count() (int, error) {
 
 	db.txnMgr.Commit(txn)
 	return count, nil
+}
+
+func (db *DatabaseTUI) listWAL() error {
+	records, err := db.walMgr.ReadAllRecords()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("\n" + colorBold(colorCyan("╔════════════════════════════════════════════════════════════╗")))
+	fmt.Println(colorBold(colorCyan("║")) + "                 " + colorBold(colorMagenta("WAL (Write-Ahead Log) Contents")) + "               " + colorBold(colorCyan("║")))
+	fmt.Println(colorBold(colorCyan("╠══════╤══════╤════════╤════════╤════════════════════════════╣")))
+	fmt.Println(colorBold(colorCyan("║ LSN  │ TXID │ TYPE   │ PAGE   │ DATA PREVIEW               ║")))
+	fmt.Println(colorBold(colorCyan("╟──────┼──────┼────────┼────────┼────────────────────────────╢")))
+
+	for _, r := range records {
+		typeName := ""
+		switch r.Type {
+		case wal.UPDATE:
+			typeName = "UPDATE"
+		case wal.COMMIT:
+			typeName = "COMMIT"
+		case wal.ABORT:
+			typeName = "ABORT"
+		case wal.CHECKPOINT:
+			typeName = "CHKPT"
+		}
+
+		preview := ""
+		if len(r.After) > 0 {
+			preview = string(r.After)
+			if len(preview) > 20 {
+				preview = preview[:17] + "..."
+			}
+		}
+
+		fmt.Printf(colorCyan("║ ")+"%-4d "+colorCyan("│ ")+"%-4d "+colorCyan("│ ")+"%-6s "+colorCyan("│ ")+"%-6d "+colorCyan("│ ")+"%-26s "+colorCyan("║\n"),
+			r.LSN, r.TxnID, typeName, r.PageID, preview)
+	}
+
+	fmt.Println(colorBold(colorCyan("╚══════╧══════╧════════╧════════╧════════════════════════════╝")))
+	return nil
 }
 
 func (db *DatabaseTUI) stats() error {
@@ -407,6 +449,11 @@ func (db *DatabaseTUI) Run() {
 		case "t":
 			if err := db.stats(); err != nil {
 				fmt.Printf("%s Error: %v\n", colorRed("✗"), err)
+			}
+
+		case "w":
+			if err := db.listWAL(); err != nil {
+				fmt.Printf("%s Error reading WAL: %v\n", colorRed("✗"), err)
 			}
 
 		case "h":

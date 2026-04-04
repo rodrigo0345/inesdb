@@ -67,9 +67,9 @@ func NewBTree(
 	return tree, nil
 }
 
-// Find retrieves a value by key within a transaction context
 func (tree *BTree) Find(txn *transaction_manager.Transaction, key []byte) ([]byte, error) {
-	// Acquire shared lock on the key
+
+	// shared locks are used for reads
 	if err := tree.lockManager.LockShared(txn, key); err != nil {
 		return nil, err
 	}
