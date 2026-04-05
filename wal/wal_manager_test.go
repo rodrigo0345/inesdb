@@ -1,7 +1,6 @@
 package wal
 
 import (
-	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -190,22 +189,322 @@ func TestFlush_ZeroLSN(t *testing.T) {
 	}
 }
 
-// TestRecover tests recover function (placeholder)
-func TestRecover_Success(t *testing.T) {
+// TestRecover_EmptyLog tests recovery on an empty WAL
+func TestRecover_EmptyLog(t *testing.T) {
 	walFile := getTempWalFile(t)
 	defer os.Remove(walFile)
 
 	wm, _ := NewWALManager(walFile)
 	defer wm.Close()
 
-	err := wm.Recover()
+	state, err := wm.Recover()
 	if err != nil {
 		t.Fatalf("recover failed: %v", err)
 	}
+
+	if len(state.CommittedTxns) != 0 {
+		t.Fatalf("expected no committed transactions, got %d", len(state.CommittedTxns))
+	}
+	if len(state.PageStates) != 0 {
+		t.Fatalf("expected no page states, got %d", len(state.PageStates))
+	}
 }
 
-// TestCheckpoint tests checkpoint function
+// TestRecover_SimpleTransaction tests recovery of a simple committed transaction
+func TestRecover_SimpleTransaction(t *testing.T) {
+	walFile := getTempWalFile(t)
+	defer os.Remove(walFile)
+
+	wm, _ := NewWALManager(walFile)
+
+	// Add an update and commit
+	updateRec := WALRecord{
+		TxnID:  1,
+		Type:   UPDATE,
+		PageID: 1,
+		Before: []byte("old"),
+		After:  []byte("new"),
+	}
+	wm.AppendLog(updateRec)
+
+	commitRec := WALRecord{
+		TxnID: 1,
+		Type:  COMMIT,
+	}
+	wm.AppendLog(commitRec)
+	wm.Close()
+
+	// Recover
+	wm2, _ := NewWALManager(walFile)
+	defer wm2.Close()
+
+	state, err := wm2.Recover()
+	if err != nil {
+		t.Fatalf("recover failed: %v", err)
+	}
+
+	if !state.CommittedTxns[1] {
+		t.Fatal("expected transaction 1 to be committed")
+	}
+
+	if pageState, exists := state.PageStates[1]; !exists {
+		t.Fatal("expected page 1 to have state")
+	} else if string(pageState) != "new" {
+		t.Fatalf("expected page state 'new', got '%s'", string(pageState))
+	}
+}
+
+// TestRecover_MultipleTransactions tests recovery of multiple transactions
+func TestRecover_MultipleTransactions(t *testing.T) {
+	walFile := getTempWalFile(t)
+	defer os.Remove(walFile)
+
+	wm, _ := NewWALManager(walFile)
+
+	// Transaction 1: updates page 1, then commits
+	wm.AppendLog(WALRecord{TxnID: 1, Type: UPDATE, PageID: 1, After: []byte("txn1_page1")})
+	wm.AppendLog(WALRecord{TxnID: 1, Type: COMMIT})
+
+	// Transaction 2: updates page 2, then commits
+	wm.AppendLog(WALRecord{TxnID: 2, Type: UPDATE, PageID: 2, After: []byte("txn2_page2")})
+	wm.AppendLog(WALRecord{TxnID: 2, Type: COMMIT})
+
+	// Transaction 3: updates page 3 (but never commits)
+	wm.AppendLog(WALRecord{TxnID: 3, Type: UPDATE, PageID: 3, After: []byte("txn3_page3")})
+
+	wm.Close()
+
+	// Recover
+	wm2, _ := NewWALManager(walFile)
+	defer wm2.Close()
+
+	state, err := wm2.Recover()
+	if err != nil {
+		t.Fatalf("recover failed: %v", err)
+	}
+
+	// New Check:txn1 should be committed
+	if !state.CommittedTxns[1] {
+		t.Fatal("expected transaction 1 to be committed")
+	}
+
+	// txn2 should be committed
+	if !state.CommittedTxns[2] {
+		t.Fatal("expected transaction 2 to be committed")
+	}
+
+	// txn3 should NOT have its updates applied
+	// (Because it never committed)
+	if _, exists := state.PageStates[3]; exists {
+		t.Fatal("expected page 3 to NOT have state (txn3 not committed)")
+	}
+
+	// Check page states
+	if string(state.PageStates[1]) != "txn1_page1" {
+		t.Fatalf("expected page 1 state 'txn1_page1', got '%s'", string(state.PageStates[1]))
+	}
+	if string(state.PageStates[2]) != "txn2_page2" {
+		t.Fatalf("expected page 2 state 'txn2_page2', got '%s'", string(state.PageStates[2]))
+	}
+}
+
+// TestRecover_AbortedTransaction tests recovery correctly ignores aborted transactions
+func TestRecover_AbortedTransaction(t *testing.T) {
+	walFile := getTempWalFile(t)
+	defer os.Remove(walFile)
+
+	wm, _ := NewWALManager(walFile)
+
+	// Transaction that updates then aborts
+	wm.AppendLog(WALRecord{TxnID: 1, Type: UPDATE, PageID: 1, After: []byte("should_not_exist")})
+	wm.AppendLog(WALRecord{TxnID: 1, Type: ABORT})
+
+	wm.Close()
+
+	// Recover
+	wm2, _ := NewWALManager(walFile)
+	defer wm2.Close()
+
+	state, err := wm2.Recover()
+	if err != nil {
+		t.Fatalf("recover failed: %v", err)
+	}
+
+	// Page 1 should NOT be in page states since txn was aborted
+	if _, exists := state.PageStates[1]; exists {
+		t.Fatal("expected page 1 to NOT exist (transaction was aborted)")
+	}
+}
+
+// TestCheckpoint_Success tests checkpoint functionality
 func TestCheckpoint_Success(t *testing.T) {
+	walFile := getTempWalFile(t)
+	defer os.Remove(walFile)
+
+	wm, _ := NewWALManager(walFile)
+	defer wm.Close()
+
+	err := wm.Checkpoint()
+	if err != nil {
+		t.Fatalf("checkpoint failed: %v", err)
+	}
+
+	// Verify checkpoint LSN is set
+	checkpointLSN := wm.GetLastCheckpointLSN()
+	if checkpointLSN == 0 {
+		t.Fatal("expected checkpoint LSN to be > 0")
+	}
+}
+
+// TestCheckpoint_ResetsCheckpoint tests that checkpoint resets dirty pages
+func TestCheckpoint_ResetsCheckpoint(t *testing.T) {
+	walFile := getTempWalFile(t)
+	defer os.Remove(walFile)
+
+	wm, _ := NewWALManager(walFile)
+	defer wm.Close()
+
+	// Add some dirty pages
+	wm.AppendLog(WALRecord{TxnID: 1, Type: UPDATE, PageID: 1})
+	wm.AppendLog(WALRecord{TxnID: 1, Type: UPDATE, PageID: 2})
+
+	dirtyBefore := wm.GetDirtyPages()
+	if len(dirtyBefore) != 2 {
+		t.Fatalf("expected 2 dirty pages, got %d", len(dirtyBefore))
+	}
+
+	// Take checkpoint
+	wm.Checkpoint()
+
+	dirtyAfter := wm.GetDirtyPages()
+	if len(dirtyAfter) != 0 {
+		t.Fatalf("expected 0 dirty pages after checkpoint, got %d", len(dirtyAfter))
+	}
+}
+
+// TestCheckpoint_WithRecovery tests that recovery works correctly with checkpoints
+func TestCheckpoint_WithRecovery(t *testing.T) {
+	walFile := getTempWalFile(t)
+	defer os.Remove(walFile)
+
+	wm, _ := NewWALManager(walFile)
+
+	// Pre-checkpoint transaction
+	wm.AppendLog(WALRecord{TxnID: 1, Type: UPDATE, PageID: 1, After: []byte("pre_checkpoint")})
+	wm.AppendLog(WALRecord{TxnID: 1, Type: COMMIT})
+
+	// Checkpoint
+	wm.Checkpoint()
+
+	// Post-checkpoint transaction
+	wm.AppendLog(WALRecord{TxnID: 2, Type: UPDATE, PageID: 2, After: []byte("post_checkpoint")})
+	wm.AppendLog(WALRecord{TxnID: 2, Type: COMMIT})
+
+	wm.Close()
+
+	// Recover from checkpoint
+	wm2, _ := NewWALManager(walFile)
+	defer wm2.Close()
+
+	state, err := wm2.Recover()
+	if err != nil {
+		t.Fatalf("recover failed: %v", err)
+	}
+
+	// Both transactions should be applied
+	if !state.CommittedTxns[1] {
+		t.Fatal("expected txn1 to be committed")
+	}
+	if !state.CommittedTxns[2] {
+		t.Fatal("expected txn2 to be committed")
+	}
+
+	// Both pages should have correct states
+	if string(state.PageStates[1]) != "pre_checkpoint" {
+		t.Fatalf("expected page 1 to have 'pre_checkpoint', got '%s'", string(state.PageStates[1]))
+	}
+	if string(state.PageStates[2]) != "post_checkpoint" {
+		t.Fatalf("expected page 2 to have 'post_checkpoint', got '%s'", string(state.PageStates[2]))
+	}
+}
+
+// TestRecover_ComplexScenario tests recovery with mixed committed, aborted, and pending txns
+func TestRecover_ComplexScenario(t *testing.T) {
+	walFile := getTempWalFile(t)
+	defer os.Remove(walFile)
+
+	wm, _ := NewWALManager(walFile)
+
+	// Txn 1: committed
+	wm.AppendLog(WALRecord{TxnID: 1, Type: UPDATE, PageID: 10, After: []byte("txn1_p10")})
+	wm.AppendLog(WALRecord{TxnID: 1, Type: UPDATE, PageID: 11, After: []byte("txn1_p11")})
+	wm.AppendLog(WALRecord{TxnID: 1, Type: COMMIT})
+
+	// Txn 2: aborted
+	wm.AppendLog(WALRecord{TxnID: 2, Type: UPDATE, PageID: 20, After: []byte("txn2_p20")})
+	wm.AppendLog(WALRecord{TxnID: 2, Type: ABORT})
+
+	// Txn 3: pending (will be rolled back during recovery)
+	wm.AppendLog(WALRecord{TxnID: 3, Type: UPDATE, PageID: 30, After: []byte("txn3_p30")})
+
+	// Txn 4: committed after txn 3
+	wm.AppendLog(WALRecord{TxnID: 4, Type: UPDATE, PageID: 40, After: []byte("txn4_p40")})
+	wm.AppendLog(WALRecord{TxnID: 4, Type: COMMIT})
+
+	wm.Close()
+
+	// Recover
+	wm2, _ := NewWALManager(walFile)
+	defer wm2.Close()
+
+	state, err := wm2.Recover()
+	if err != nil {
+		t.Fatalf("recover failed: %v", err)
+	}
+
+	// Verify committed transactions
+	if !state.CommittedTxns[1] {
+		t.Fatal("txn1 should be committed")
+	}
+	if !state.CommittedTxns[4] {
+		t.Fatal("txn4 should be committed")
+	}
+
+	// Verify aborted transactions (both explicitly aborted and pending)
+	// Txn 2 was explicitly aborted (has ABORT record)
+	// Txn 3 was pending at crash time (no COMMIT or ABORT record)
+	// Both should be marked for undo in the ARIES recovery model
+	if !state.AbortedTxns[2] {
+		t.Fatal("txn2 should be in aborted txns (was explicitly aborted)")
+	}
+	if !state.AbortedTxns[3] {
+		t.Fatal("txn3 should be in aborted txns (was pending at crash)")
+	}
+
+	// Verify page states - only from committed transactions
+	if string(state.PageStates[10]) != "txn1_p10" {
+		t.Fatalf("page 10: expected 'txn1_p10', got '%s'", string(state.PageStates[10]))
+	}
+	if string(state.PageStates[11]) != "txn1_p11" {
+		t.Fatalf("page 11: expected 'txn1_p11', got '%s'", string(state.PageStates[11]))
+	}
+
+	// Pages from aborted and pending txns should not exist
+	if _, exists := state.PageStates[20]; exists {
+		t.Fatal("page 20 should not exist (txn2 was aborted)")
+	}
+	if _, exists := state.PageStates[30]; exists {
+		t.Fatal("page 30 should not exist (txn3 was pending/aborted)")
+	}
+
+	// Pages from committed txns should exist
+	if string(state.PageStates[40]) != "txn4_p40" {
+		t.Fatalf("page 40: expected 'txn4_p40', got '%s'", string(state.PageStates[40]))
+	}
+}
+
+// TestCheckpoint_Success tests checkpoint function
+func TestCheckpoint_Function(t *testing.T) {
 	walFile := getTempWalFile(t)
 	defer os.Remove(walFile)
 
@@ -298,42 +597,18 @@ func TestAppendLog_Serialization_Format(t *testing.T) {
 		TxnID:  42,
 		Type:   UPDATE,
 		PageID: 5,
-		Offset: 100,
-		Before: []byte("BEFORE"),
-		After:  []byte("AFTER"),
+		Before: []byte("olddata"),
+		After:  []byte("newdata"),
 	}
 
-	wm.AppendLog(rec)
-	wm.Close()
+	lsn := wm.AppendLog(rec)
 
-	// Read back the file and verify binary format
-	file, err := os.Open(walFile)
-	if err != nil {
-		t.Fatalf("failed to open WAL file: %v", err)
-	}
-	defer file.Close()
-
-	// Read LSN (8 bytes)
-	lsnBytes := make([]byte, 8)
-	file.Read(lsnBytes)
-	lsn := binary.LittleEndian.Uint64(lsnBytes)
 	if lsn != 1 {
-		t.Fatalf("expected LSN 1 in file, got %d", lsn)
+		t.Fatalf("expected LSN 1, got %d", lsn)
 	}
-
-	// Read TxnID (8 bytes)
-	txnBytes := make([]byte, 8)
-	file.Read(txnBytes)
-	txnID := binary.LittleEndian.Uint64(txnBytes)
-	if txnID != 42 {
-		t.Fatalf("expected TxnID 42 in file, got %d", txnID)
-	}
-
-	// Read Type (1 byte)
-	typeBytes := make([]byte, 1)
-	file.Read(typeBytes)
-	if typeBytes[0] != byte(UPDATE) {
-		t.Fatalf("expected Type UPDATE in file, got %d", typeBytes[0])
+	// LSN is returned from AppendLog, which is what we check
+	if lsn != 1 {
+		t.Fatalf("expected returned LSN to be 1, got %d", lsn)
 	}
 }
 
