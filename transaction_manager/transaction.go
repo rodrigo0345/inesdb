@@ -25,3 +25,11 @@ func (t *Transaction) GetID() uint64 {
 func (t *Transaction) AddUndo(entry UndoEntry) {
 	t.undoLog = append(t.undoLog, entry)
 }
+
+func (t *Transaction) Abort() {
+	t.state = ABORTED
+}
+
+func (t *Transaction) GetState() TxnState {
+	return t.state
+}

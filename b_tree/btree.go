@@ -81,7 +81,7 @@ func (tree *BTree) Find(txn *transaction_manager.Transaction, key []byte) ([]byt
 	}
 
 	leafID := path[len(path)-1]
-	leafPage, err := tree.bufferPool.FetchPage(buffermanager.PageID(leafID))
+	leafPage, err := tree.bufferPool.FetchPage(buffermanager.PageID(leafID)) // auto pins the memory, needs manual unpin
 	if err != nil {
 		return nil, err
 	}

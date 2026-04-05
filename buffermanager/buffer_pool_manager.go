@@ -18,8 +18,8 @@ type WALFlusher interface {
 
 type BufferPoolManager struct {
 	poolSize    int
-	frames      []*Page
-	pageTable   map[PageID]FrameID
+	frames      []*Page            // actual cache buffer using LRU replacement policy
+	pageTable   map[PageID]FrameID // logical PageID to physical FrameID mapping
 	freeList    []FrameID
 	replacer    Replacer
 	diskManager *DiskManager
@@ -55,11 +55,13 @@ func (bpm *BufferPoolManager) SetWALManager(walMgr interface{}) {
 // flushPageInternal handles the WAL protocol + Disk I/O sequence.
 // bpm.mu MUST be held when calling this.
 func (bpm *BufferPoolManager) flushPageInternal(page *Page) error {
+
+	// if the page is not dirty, we can skip the flush
 	if !page.IsDirty() {
 		return nil
 	}
 
-	// 1. WAL Protocol: Flush log up to the page's last modification LSN
+	// make sure all WAL records up to pageLSN of this page are flushed before writing the page to disk
 	if bpm.walMgr != nil {
 		if flusher, ok := bpm.walMgr.(WALFlusher); ok {
 			if err := flusher.Flush(page.pageLSN); err != nil {
@@ -68,7 +70,7 @@ func (bpm *BufferPoolManager) flushPageInternal(page *Page) error {
 		}
 	}
 
-	// 2. Safe to write to data file now
+	// now that every change was appended to the wal, we can safely write the page to disk
 	if err := bpm.diskManager.WritePage(page.GetID(), page.GetData()); err != nil {
 		return err
 	}
@@ -80,6 +82,7 @@ func (bpm *BufferPoolManager) flushPageInternal(page *Page) error {
 func (bpm *BufferPoolManager) FetchPage(pageID PageID) (*Page, error) {
 	bpm.mu.Lock()
 
+	// if the page is already in the buffer pool, just pin and return it
 	if frameID, exists := bpm.pageTable[pageID]; exists {
 		frame := bpm.frames[frameID]
 		frame.SetPinCount(frame.GetPinCount() + 1)
@@ -100,11 +103,10 @@ func (bpm *BufferPoolManager) FetchPage(pageID PageID) (*Page, error) {
 	frame.SetDirty(false)
 	frame.pageLSN = 0 // Reset LSN for newly loaded content
 
+	// fill the frame's data with the page content from disk
 	if err := bpm.diskManager.ReadPage(pageID, frame.GetData()); err != nil {
 		// Clear data if page doesn't exist yet
-		for i := range frame.data {
-			frame.data[i] = 0
-		}
+		frame.DeepClean()
 	}
 
 	bpm.pageTable[pageID] = frameID
@@ -206,22 +208,27 @@ func (bpm *BufferPoolManager) Close() error {
 
 // getAvailableFrameIDLocked finds a free frame or evicts a victim using the WAL protocol.
 func (bpm *BufferPoolManager) getAvailableFrameIDLocked() (FrameID, error) {
+
+	// check if there is already a free frame
 	if len(bpm.freeList) > 0 {
 		frameID := bpm.freeList[0]
 		bpm.freeList = bpm.freeList[1:]
 		return frameID, nil
 	}
 
+	// if not, we need to evict a victim frame, to create space for the new page
 	frameID, ok := bpm.replacer.Victim()
 	if !ok {
 		return 0, ErrBufferFull
 	}
 
+	// we get the victim page and flush it to disk in case it is dirty
 	victimPage := bpm.frames[frameID]
 	if err := bpm.flushPageInternal(victimPage); err != nil {
 		return 0, err
 	}
 
+	// now we can reuse the victim frame id for the new page, but first we need to remove the victim page from the page table
 	delete(bpm.pageTable, victimPage.GetID())
 	return frameID, nil
 }

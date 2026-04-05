@@ -81,6 +81,9 @@ func TestReadPage_Success(t *testing.T) {
 
 	dm.WritePage(0, testData)
 
+	// Flush to ensure write is on disk before reading
+	dm.Flush()
+
 	// Read it back
 	readData := make([]byte, PageSize)
 	err := dm.ReadPage(0, readData)
@@ -127,6 +130,12 @@ func TestWritePage_Success(t *testing.T) {
 	err := dm.WritePage(0, testData)
 	if err != nil {
 		t.Fatalf("failed to write page: %v", err)
+	}
+
+	// Flush to ensure write is on disk
+	err = dm.Flush()
+	if err != nil {
+		t.Fatalf("failed to flush: %v", err)
 	}
 
 	// Verify file size
@@ -271,6 +280,9 @@ func TestMultiplePages(t *testing.T) {
 		data[0] = byte(i)
 		dm.WritePage(PageID(i), data)
 	}
+
+	// Flush to ensure all writes are on disk
+	dm.Flush()
 
 	// Read them back and verify
 	for i := 0; i < pages; i++ {

@@ -326,8 +326,6 @@ func TestClose_AllPagesFlushed(t *testing.T) {
 	// Note: Pages are written to disk but remain marked dirty in memory
 	// This is expected behavior - the pages themselves aren't modified by Close
 	// They're just flushed to disk
-
-	dm.Close()
 }
 
 // TestPageReuse tests that pages can be reused after eviction

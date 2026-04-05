@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"sync"
+	"time"
 )
 
 var (
@@ -41,14 +42,30 @@ type LockQueue struct {
 }
 
 type LockManager struct {
-	lockTable map[string]*LockQueue
-	mu        sync.Mutex
+	lockTable    map[string]*LockQueue
+	mu           sync.Mutex
+	waitForGraph *WaitForGraph
+	deadlockWait time.Duration // configurable timeout for deadlock detection
 }
 
 func NewLockManager() *LockManager {
+	return NewLockManagerWithTimeout(5 * time.Second)
+}
+
+// NewLockManagerWithTimeout creates a LockManager with a custom deadlock detection timeout
+func NewLockManagerWithTimeout(timeout time.Duration) *LockManager {
 	return &LockManager{
-		lockTable: make(map[string]*LockQueue),
+		lockTable:    make(map[string]*LockQueue),
+		waitForGraph: NewWaitForGraph(),
+		deadlockWait: timeout,
 	}
+}
+
+// SetDeadlockTimeout updates the deadlock detection timeout
+func (lm *LockManager) SetDeadlockTimeout(timeout time.Duration) {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+	lm.deadlockWait = timeout
 }
 
 // LockShared acquires a shared lock on the key.
@@ -60,6 +77,8 @@ func (lm *LockManager) LockShared(txn *Transaction, key []byte) error {
 	keyStr := string(key)
 
 	lm.mu.Lock()
+
+	// each key can have multiple pending requests, that is why we need a queue. The queue also tracks the order of requests for fairness and deadlock detection
 	queue, exists := lm.lockTable[keyStr]
 	if !exists {
 		queue = &LockQueue{requests: make([]*LockRequest, 0)}
@@ -76,31 +95,33 @@ func (lm *LockManager) LockShared(txn *Transaction, key []byte) error {
 
 	queue.mu.Lock()
 
-	// Check if already holding the lock (upgrade logic or idempotent)
+	// Check if already holding the lock if so upgrade
 	for _, r := range queue.requests {
 		if r.txnID == txn.GetID() && r.state == GRANTED {
 			if r.mode == EXCLUSIVE {
 				queue.mu.Unlock()
-				return nil // Already have exclusive, shared is implicitly granted
+				return nil // this txn is already exclusive, shared is implicitly granted
 			}
 			if r.mode == SHARED {
 				queue.mu.Unlock()
-				return nil // Already hold shared
+				return nil // this transaction already holds a shared lock
 			}
 		}
 	}
 
 	canGrant := true
+	var holderTxnID uint64
 	for _, expected := range queue.requests {
-		if expected.mode == EXCLUSIVE {
-			canGrant = false // Someone holds or is waiting for exclusive
+		if expected.mode == EXCLUSIVE && expected.state == GRANTED {
+			canGrant = false
+			holderTxnID = expected.txnID // Track who holds the exclusive lock
 			break
 		}
 	}
 
 	if canGrant {
 		req.state = GRANTED
-		txn.sharedLocks = append(txn.sharedLocks, key)
+		txn.sharedLocks = append(txn.sharedLocks, key) // this is tracked to make unlocking easier
 	}
 
 	queue.requests = append(queue.requests, req)
@@ -110,17 +131,46 @@ func (lm *LockManager) LockShared(txn *Transaction, key []byte) error {
 		return nil
 	}
 
-	// Wait logic
-	// In a real DB, LockManager checks for cycles (deadlocks) asynchronously
-	// Here, we wait on channel or cycle detection
-	select {
-	case <-req.ch:
-		if txn.state == ABORTED {
-			return ErrTxnAborted
+	// Register the wait dependency in the wait-for graph
+	lm.waitForGraph.AddWait(txn.GetID(), holderTxnID)
+	defer lm.waitForGraph.RemoveWait(txn.GetID(), holderTxnID)
+
+	// Check for deadlock cycles in the wait-for graph
+	if lm.waitForGraph.HasCycle(txn.GetID()) {
+		txn.Abort()
+		return ErrDeadlock
+	}
+
+	// Wait logic with timeout and periodic deadlock detection
+	for {
+		select {
+		case <-req.ch: // notifyNext() is responsible for calling this branch
+			if txn.state == ABORTED {
+				return ErrTxnAborted
+			}
+			// Granted, add to txn
+			txn.sharedLocks = append(txn.sharedLocks, key)
+			return nil
+
+		case <-time.After(lm.deadlockWait):
+			// Timeout triggered - check if there's a real cycle
+			if lm.waitForGraph.HasCycle(txn.GetID()) {
+				// Deadlock detected - remove from queue and abort
+				queue.mu.Lock()
+				for i, r := range queue.requests {
+					if r.txnID == txn.GetID() && r == req {
+						queue.requests = append(queue.requests[:i], queue.requests[i+1:]...)
+						lm.notifyNext(queue)
+						break
+					}
+				}
+				queue.mu.Unlock()
+				txn.Abort()
+				return ErrDeadlock
+			}
+			// No deadlock detected, continue waiting for the lock
+			// Loop again and wait for the next timeout period
 		}
-		// Granted, add to txn
-		txn.sharedLocks = append(txn.sharedLocks, key)
-		return nil
 	}
 }
 
@@ -151,17 +201,26 @@ func (lm *LockManager) LockExclusive(txn *Transaction, key []byte) error {
 
 	// Check if already holding the lock
 	isUpgrade := false
+	var holderTxnID uint64
 	for _, r := range queue.requests {
 		if r.txnID == txn.GetID() && r.state == GRANTED {
 			if r.mode == EXCLUSIVE {
 				queue.mu.Unlock()
 				return nil // Already hold exclusive
 			}
-			if r.mode == SHARED {
+			if r.mode == SHARED { // upgrade the lock access
 				isUpgrade = true
 				req.state = WAITING
 				break
 			}
+		}
+	}
+
+	// Find who is currently holding the lock
+	for _, r := range queue.requests {
+		if r.state == GRANTED && r.txnID != txn.GetID() {
+			holderTxnID = r.txnID
+			break
 		}
 	}
 
@@ -185,14 +244,47 @@ func (lm *LockManager) LockExclusive(txn *Transaction, key []byte) error {
 		return nil
 	}
 
-	// Wait
-	select {
-	case <-req.ch:
-		if txn.state == ABORTED {
-			return ErrTxnAborted
+	// Register the wait dependency in the wait-for graph
+	if holderTxnID > 0 {
+		lm.waitForGraph.AddWait(txn.GetID(), holderTxnID)
+		defer lm.waitForGraph.RemoveWait(txn.GetID(), holderTxnID)
+	}
+
+	// Check for deadlock cycles in the wait-for graph
+	if holderTxnID > 0 && lm.waitForGraph.HasCycle(txn.GetID()) {
+		txn.Abort()
+		return ErrDeadlock
+	}
+
+	// Wait logic with timeout and periodic deadlock detection
+	for {
+		select {
+		case <-req.ch: // notifyNext() is responsible for calling this branch
+			if txn.state == ABORTED {
+				return ErrTxnAborted
+			}
+			txn.exclusiveLocks = append(txn.exclusiveLocks, key)
+			return nil
+
+		case <-time.After(lm.deadlockWait):
+			// Timeout triggered - check if there's a real cycle
+			if lm.waitForGraph.HasCycle(txn.GetID()) {
+				// Deadlock detected - remove from queue and abort
+				queue.mu.Lock()
+				for i, r := range queue.requests {
+					if r.txnID == txn.GetID() && r == req {
+						queue.requests = append(queue.requests[:i], queue.requests[i+1:]...)
+						lm.notifyNext(queue)
+						break
+					}
+				}
+				queue.mu.Unlock()
+				txn.Abort()
+				return ErrDeadlock
+			}
+			// No deadlock detected, continue waiting for the lock
+			// Loop again and wait for the next timeout period
 		}
-		txn.exclusiveLocks = append(txn.exclusiveLocks, key)
-		return nil
 	}
 }
 
@@ -237,8 +329,30 @@ func (lm *LockManager) Unlock(txn *Transaction, key []byte) error {
 		queue.requests = append(queue.requests[:foundIndex], queue.requests[foundIndex+1:]...)
 	}
 
-	// notify next waiting tasks
+	// Clean up wait-for graph edges where this transaction is the holder
+	// This allows other waiting transactions to proceed and prevents stale wait edges
+	// NOTE: Call NotifyNext BEFORE cleaning up graph edges so waiting txns get notified
 	lm.notifyNext(queue)
+
+	// Now clean up the graph edges after notification
+	lm.waitForGraph.mu.Lock()
+	for waiter := range lm.waitForGraph.waitEdges {
+		if edges, exists := lm.waitForGraph.waitEdges[waiter]; exists {
+			newEdges := make([]uint64, 0)
+			for _, holder := range edges {
+				if holder != txn.GetID() {
+					newEdges = append(newEdges, holder)
+				}
+			}
+			if len(newEdges) == 0 {
+				delete(lm.waitForGraph.waitEdges, waiter)
+			} else {
+				lm.waitForGraph.waitEdges[waiter] = newEdges
+			}
+		}
+	}
+	lm.waitForGraph.mu.Unlock()
+
 	return nil
 }
 
@@ -260,29 +374,32 @@ func (lm *LockManager) notifyNext(queue *LockQueue) {
 	}
 
 	if queue.requests[firstWaiting].mode == EXCLUSIVE {
-		// Only grant if no one else is currently holding it
-		anyoneHolding := false
+		// Only grant if no one else (different transaction) is currently holding it
+		anyoneElseHolding := false
+		txnIDWaiting := queue.requests[firstWaiting].txnID
 		for i := 0; i < firstWaiting; i++ {
-			if queue.requests[i].state == GRANTED {
-				anyoneHolding = true
+			if queue.requests[i].state == GRANTED && queue.requests[i].txnID != txnIDWaiting {
+				anyoneElseHolding = true
 				break
 			}
 		}
-		if !anyoneHolding {
+		if !anyoneElseHolding {
 			queue.requests[firstWaiting].state = GRANTED
 			close(queue.requests[firstWaiting].ch)
 		}
 	} else if queue.requests[firstWaiting].mode == SHARED {
 		// Grant to all subsequent consecutive shared requests
-		anyoneHoldingExclusive := false
+		// unless there's an exclusive lock held by a different transaction
+		anyoneElseHoldingExclusive := false
+		txnIDWaiting := queue.requests[firstWaiting].txnID
 		for i := 0; i < firstWaiting; i++ {
-			if queue.requests[i].state == GRANTED && queue.requests[i].mode == EXCLUSIVE {
-				anyoneHoldingExclusive = true
+			if queue.requests[i].state == GRANTED && queue.requests[i].mode == EXCLUSIVE && queue.requests[i].txnID != txnIDWaiting {
+				anyoneElseHoldingExclusive = true
 				break
 			}
 		}
 
-		if !anyoneHoldingExclusive {
+		if !anyoneElseHoldingExclusive {
 			for i := firstWaiting; i < len(queue.requests); i++ {
 				if queue.requests[i].mode == SHARED {
 					if queue.requests[i].state != GRANTED {
@@ -295,10 +412,4 @@ func (lm *LockManager) notifyNext(queue *LockQueue) {
 			}
 		}
 	}
-}
-
-// detectCycle checks for deadlocks
-func (lm *LockManager) detectCycle() bool {
-	// A simple Waits-for graph can be built to detect cycle
-	return false
 }

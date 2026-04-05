@@ -84,3 +84,9 @@ func (p *Page) GetLSN() uint64 {
 func (p *Page) SetLSN(lsn uint64) {
 	p.pageLSN = lsn
 }
+
+func (p *Page) DeepClean() {
+	for i := range p.data {
+		p.data[i] = 0
+	}
+}
