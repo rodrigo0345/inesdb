@@ -50,7 +50,6 @@ func TestWaitForGraphRemoveWait(t *testing.T) {
 	}
 }
 
-// TestWaitForGraphRemoveWaitNonexistent tests removing a non-existent edge
 func TestWaitForGraphRemoveWaitNonexistent(t *testing.T) {
 	wfg := NewWaitForGraph()
 

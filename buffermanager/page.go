@@ -2,8 +2,7 @@ package buffermanager
 
 import "sync"
 
-type PageID uint32
-type FrameID uint32
+type PageID uint64
 
 const PageSize = 4096
 

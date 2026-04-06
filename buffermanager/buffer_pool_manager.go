@@ -3,6 +3,8 @@ package buffermanager
 import (
 	"errors"
 	"sync"
+
+	"github.com/rodrigo0345/omag/replacer"
 )
 
 var (
@@ -25,49 +27,41 @@ type WALFlusher interface {
 }
 
 type BufferPoolManager struct {
-	poolSize     int
-	frames       []*Page            // actual cache buffer with configurable replacement policy
-	pageTable    map[PageID]FrameID // logical PageID to physical FrameID mapping
-	freeList     []FrameID
-	replacer     Replacer
-	replacerType ReplacerType // Track which replacer algorithm is being used
-	diskManager  *DiskManager
-	walMgr       interface{}
-	mu           sync.Mutex
+	poolSize        int
+	frames          []*Page                     // actual cache buffer with configurable replacement policy
+	pageTable       map[PageID]replacer.FrameID // logical PageID to physical FrameID mapping
+	freeList        []replacer.FrameID
+	diskManager     *DiskManager
+	replacerManager replacer.IReplacer
+	walMgr          interface{}
+	mu              sync.Mutex
 }
 
 func NewBufferPoolManager(poolSize int, diskManager *DiskManager) *BufferPoolManager {
-	return NewBufferPoolManagerWithReplacer(poolSize, diskManager, ReplacerClock)
+	defaultReplacerPolicy := replacer.NewClockReplacer(poolSize)
+	return NewBufferPoolManagerWithReplacer(poolSize, diskManager, defaultReplacerPolicy)
 }
 
 // NewBufferPoolManagerWithReplacer creates a buffer pool manager with a specified replacer algorithm
-func NewBufferPoolManagerWithReplacer(poolSize int, diskManager *DiskManager, replacerType ReplacerType) *BufferPoolManager {
+func NewBufferPoolManagerWithReplacer(
+	poolSize int,
+	diskManager *DiskManager,
+	replacerManager replacer.IReplacer) *BufferPoolManager {
 	frames := make([]*Page, poolSize)
-	freeList := make([]FrameID, poolSize)
+	freeList := make([]replacer.FrameID, poolSize)
 
 	for i := 0; i < poolSize; i++ {
 		frames[i] = NewPage(PageID(i))
-		freeList[i] = FrameID(i)
-	}
-
-	var replacer Replacer
-	switch replacerType {
-	case ReplacerLRU:
-		replacer = NewLRUReplacer(poolSize)
-	case ReplacerClock:
-		replacer = NewClockReplacer(poolSize)
-	default:
-		replacer = NewLRUReplacer(poolSize) // Default to LRU
+		freeList[i] = replacer.FrameID(i)
 	}
 
 	return &BufferPoolManager{
-		poolSize:     poolSize,
-		frames:       frames,
-		pageTable:    make(map[PageID]FrameID),
-		freeList:     freeList,
-		replacer:     replacer,
-		replacerType: replacerType,
-		diskManager:  diskManager,
+		poolSize:        poolSize,
+		frames:          frames,
+		pageTable:       make(map[PageID]replacer.FrameID),
+		freeList:        freeList,
+		diskManager:     diskManager,
+		replacerManager: replacerManager,
 	}
 }
 
@@ -104,14 +98,15 @@ func (bpm *BufferPoolManager) flushPageInternal(page *Page) error {
 	return nil
 }
 
-func (bpm *BufferPoolManager) FetchPage(pageID PageID) (*Page, error) {
+// can be thought of as the "fetch page" operation
+func (bpm *BufferPoolManager) PinPage(pageID PageID) (*Page, error) {
 	bpm.mu.Lock()
 
 	// if the page is already in the buffer pool, just pin and return it
 	if frameID, exists := bpm.pageTable[pageID]; exists {
 		frame := bpm.frames[frameID]
 		frame.SetPinCount(frame.GetPinCount() + 1)
-		bpm.replacer.Pin(frameID)
+		bpm.replacerManager.Pin(replacer.FrameID(frameID))
 		bpm.mu.Unlock()
 		return frame, nil
 	}
@@ -135,7 +130,7 @@ func (bpm *BufferPoolManager) FetchPage(pageID PageID) (*Page, error) {
 	}
 
 	bpm.pageTable[pageID] = frameID
-	bpm.replacer.Pin(frameID)
+	bpm.replacerManager.Pin(replacer.FrameID(frameID))
 
 	bpm.mu.Unlock()
 	return frame, nil
@@ -160,7 +155,7 @@ func (bpm *BufferPoolManager) UnpinPage(pageID PageID, isDirty bool) error {
 	}
 
 	if frame.GetPinCount() == 0 {
-		bpm.replacer.Unpin(frameID)
+		bpm.replacerManager.Unpin(replacer.FrameID(frameID))
 	}
 
 	return nil
@@ -188,7 +183,7 @@ func (bpm *BufferPoolManager) NewPage() (*Page, error) {
 	}
 
 	bpm.pageTable[pageID] = frameID
-	bpm.replacer.Pin(frameID)
+	bpm.replacerManager.Pin(frameID)
 
 	bpm.mu.Unlock()
 	return frame, nil
@@ -232,7 +227,7 @@ func (bpm *BufferPoolManager) Close() error {
 }
 
 // getAvailableFrameIDLocked finds a free frame or evicts a victim using the WAL protocol.
-func (bpm *BufferPoolManager) getAvailableFrameIDLocked() (FrameID, error) {
+func (bpm *BufferPoolManager) getAvailableFrameIDLocked() (replacer.FrameID, error) {
 
 	// check if there is already a free frame
 	if len(bpm.freeList) > 0 {
@@ -242,7 +237,7 @@ func (bpm *BufferPoolManager) getAvailableFrameIDLocked() (FrameID, error) {
 	}
 
 	// if not, we need to evict a victim frame, to create space for the new page
-	frameID, ok := bpm.replacer.Victim()
+	frameID, ok := bpm.replacerManager.Victim()
 	if !ok {
 		return 0, ErrBufferFull
 	}
@@ -262,24 +257,6 @@ func (bpm *BufferPoolManager) GetPoolSize() int {
 	return bpm.poolSize
 }
 
-// GetReplacerType returns the type of replacer algorithm currently in use
-func (bpm *BufferPoolManager) GetReplacerType() ReplacerType {
-	return bpm.replacerType
-}
-
-// GetReplacerName returns a human-readable name for the replacer algorithm
-func (bpm *BufferPoolManager) GetReplacerName() string {
-	switch bpm.replacerType {
-	case ReplacerLRU:
-		return "LRU"
-	case ReplacerClock:
-		return "Clock"
-	default:
-		return "Unknown"
-	}
-}
-
-// GetReplacerSize returns the number of frames tracked by the replacer
 func (bpm *BufferPoolManager) GetReplacerSize() int {
-	return bpm.replacer.Size()
+	return bpm.replacerManager.Size()
 }

@@ -33,7 +33,7 @@ func (c *TreeCursor) Seek(key []byte) error {
 	}
 
 	c.currentPageID = path[len(path)-1]
-	leafPageObj, err := c.tree.bufferPool.FetchPage(buffermanager.PageID(c.currentPageID))
+	leafPageObj, err := c.tree.bufferPool.PinPage(buffermanager.PageID(c.currentPageID))
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func (c *TreeCursor) First() error {
 	pageID := c.tree.meta.RootPage()
 
 	for {
-		pageObj, err := c.tree.bufferPool.FetchPage(buffermanager.PageID(pageID))
+		pageObj, err := c.tree.bufferPool.PinPage(buffermanager.PageID(pageID))
 		if err != nil {
 			return err
 		}
@@ -132,7 +132,7 @@ func (c *TreeCursor) Next() error {
 
 		c.tree.bufferPool.UnpinPage(c.currentPageObj.GetID(), false)
 
-		pageObj, err := c.tree.bufferPool.FetchPage(buffermanager.PageID(rightSib))
+		pageObj, err := c.tree.bufferPool.PinPage(buffermanager.PageID(rightSib))
 		if err != nil {
 			return err
 		}

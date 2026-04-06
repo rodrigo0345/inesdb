@@ -1,6 +1,0 @@
-# command-line-arguments [command-line-arguments.test]
-./resilience_e2e_test.go:14:40: undefined: DatabaseTUI
-./resilience_e2e_test.go:50:9: undefined: DatabaseTUI
-./resilience_e2e_test.go:215:2: walPath2 declared and not used
-FAIL	command-line-arguments [build failed]
-FAIL

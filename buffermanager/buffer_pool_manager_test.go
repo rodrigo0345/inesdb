@@ -75,7 +75,7 @@ func TestNewPage_BufferFull(t *testing.T) {
 func TestFetchPage_NewPage(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
-	page, err := bpm.FetchPage(99)
+	page, err := bpm.PinPage(99)
 	if err != nil {
 		t.Fatalf("failed to fetch page: %v", err)
 	}
@@ -94,10 +94,10 @@ func TestFetchPage_NewPage(t *testing.T) {
 func TestFetchPage_AlreadyCached(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
-	page1, _ := bpm.FetchPage(50)
+	page1, _ := bpm.PinPage(50)
 	page1Pin1 := page1.GetPinCount()
 
-	page2, _ := bpm.FetchPage(50)
+	page2, _ := bpm.PinPage(50)
 	if page1 != page2 {
 		t.Fatal("expected same page object")
 	}
@@ -120,7 +120,7 @@ func TestFetchPage_BufferFull(t *testing.T) {
 	page1.SetDirty(true)
 
 	// Try to fetch another page when buffer is full and only page is pinned
-	_, err := bpm.FetchPage(100)
+	_, err := bpm.PinPage(100)
 	if err != ErrBufferFull {
 		t.Fatalf("expected ErrBufferFull, got %v", err)
 	}
@@ -146,7 +146,7 @@ func TestFetchPage_EvictsAndFlushes(t *testing.T) {
 	bpm.UnpinPage(id2, true)
 
 	// Fetch page 3, should evict page1 (LRU) and flush it
-	page3, _ := bpm.FetchPage(300)
+	page3, _ := bpm.PinPage(300)
 	page3.SetDirty(true)
 
 	// page1 should now be evicted from page table
@@ -161,7 +161,7 @@ func TestFetchPage_EvictsAndFlushes(t *testing.T) {
 func TestUnpinPage_Success(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
-	page, _ := bpm.FetchPage(1)
+	page, _ := bpm.PinPage(1)
 	if page.GetPinCount() != 1 {
 		t.Fatalf("expected pin count 1, got %d", page.GetPinCount())
 	}
@@ -183,7 +183,7 @@ func TestUnpinPage_Success(t *testing.T) {
 func TestUnpinPage_MarkDirty(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
-	page, _ := bpm.FetchPage(2)
+	page, _ := bpm.PinPage(2)
 	err := bpm.UnpinPage(2, true)
 	if err != nil {
 		t.Fatalf("failed to unpin: %v", err)
@@ -208,7 +208,7 @@ func TestUnpinPage_NotFound(t *testing.T) {
 func TestUnpinPage_ZeroPinCount(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
-	page, _ := bpm.FetchPage(3)
+	page, _ := bpm.PinPage(3)
 	bpm.UnpinPage(3, false)
 
 	// Unpin again when pin count is 0 - should not go negative

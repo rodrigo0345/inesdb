@@ -1,1 +1,0 @@
-FAIL	github.com/rodrigo0345/omag [build failed]

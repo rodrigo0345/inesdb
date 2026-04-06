@@ -35,7 +35,7 @@ func NewBTree(
 	}
 
 	// Try to fetch the meta page
-	metaPage, err := bufferPool.FetchPage(0)
+	metaPage, err := bufferPool.PinPage(0)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (tree *BTree) Find(txn *transaction_manager.Transaction, key []byte) ([]byt
 	}
 
 	leafID := path[len(path)-1]
-	leafPage, err := tree.bufferPool.FetchPage(buffermanager.PageID(leafID)) // auto pins the memory, needs manual unpin
+	leafPage, err := tree.bufferPool.PinPage(buffermanager.PageID(leafID)) // auto pins the memory, needs manual unpin
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func (tree *BTree) Delete(txn *transaction_manager.Transaction, key []byte) erro
 	}
 
 	leafID := path[len(path)-1]
-	leafPage, err := tree.bufferPool.FetchPage(buffermanager.PageID(leafID))
+	leafPage, err := tree.bufferPool.PinPage(buffermanager.PageID(leafID))
 	if err != nil {
 		return err
 	}
@@ -174,7 +174,7 @@ func (tree *BTree) Insert(txn *transaction_manager.Transaction, key []byte, valu
 	}
 
 	leafID := path[len(path)-1]
-	leafPage, err := tree.bufferPool.FetchPage(buffermanager.PageID(leafID))
+	leafPage, err := tree.bufferPool.PinPage(buffermanager.PageID(leafID))
 	if err != nil {
 		return err
 	}
@@ -240,7 +240,7 @@ func (tree *BTree) RangeScan(txn *transaction_manager.Transaction, lo, hi []byte
 
 	// Scan through leaf pages until we exceed hi
 	for leafID != 0 {
-		leafPage, err := tree.bufferPool.FetchPage(buffermanager.PageID(leafID))
+		leafPage, err := tree.bufferPool.PinPage(buffermanager.PageID(leafID))
 		if err != nil {
 			return nil, err
 		}
@@ -337,7 +337,7 @@ func (tree *BTree) promoteKey(txn *transaction_manager.Transaction, path []uint6
 	}
 
 	parentID := path[len(path)-1]
-	parentPage, err := tree.bufferPool.FetchPage(buffermanager.PageID(parentID))
+	parentPage, err := tree.bufferPool.PinPage(buffermanager.PageID(parentID))
 	if err != nil {
 		return err
 	}
