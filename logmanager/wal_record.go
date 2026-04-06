@@ -20,7 +20,7 @@ type WALRecord struct {
 	After   []byte                       // After image (used for redo during recovery)
 }
 
-func NewWALRecord(lsn, prevLSN, txnID uint64, recordType RecordType, pageID PageID, offset uint16, pageLSN uint64, before, after []byte) WALRecord {
+func NewWALRecord(lsn, prevLSN, txnID uint64, recordType RecordType, pageID resource_page.ResourcePageID, offset uint16, pageLSN uint64, before, after []byte) WALRecord {
 	return WALRecord{
 		LSN:     lsn,
 		PrevLSN: prevLSN,
@@ -38,8 +38,6 @@ func (rec WALRecord) String() string {
 	return fmt.Sprintf("WALRecord{LSN: %d, PrevLSN: %d, TxnID: %d, Type: %s, PageID: %d, Offset: %d, PageLSN: %d, Before: %v, After: %v}",
 		rec.LSN, rec.PrevLSN, rec.TxnID, rec.Type, rec.PageID, rec.Offset, rec.PageLSN, rec.Before, rec.After)
 }
-
-// getters and setters
 
 func (rec WALRecord) GetLSN() uint64 {
 	return rec.LSN
