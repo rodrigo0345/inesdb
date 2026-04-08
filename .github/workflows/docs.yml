@@ -3,20 +3,15 @@ name: Generate and Deploy Documentation
 on:
   push:
     branches: [ "main" ]
-    paths:
-      - 'internal/**'
-      - 'cmd/**'
-      - 'docs/**'
-      - '.github/workflows/docs.yml'
-      - 'go.mod'
   workflow_dispatch:
+  
 
 jobs:
   build-docs:
     name: Build and Deploy Documentation
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       pages: write
       id-token: write
     
@@ -139,11 +134,11 @@ jobs:
 
         ## Core Components
 
-        - **B+ Tree**: Fully documented in [btree.md](btree.md)
-        - **Buffer Pool**: Reference in [buffer-pool.md](buffer-pool.md)
-        - **LSM Tree**: Details in [lsm-tree.md](lsm-tree.md)
-        - **Transactions**: Transaction API in [transactions.md](transactions.md)
-        - **Concurrency**: Concurrency control in [concurrency.md](concurrency.md)
+        - **B+ Tree**: Fully documented in [btree.md](../api/btree.md)
+        - **Buffer Pool**: Reference in [buffer-pool.md](../api/buffer-pool.md)
+        - **LSM Tree**: Details in [lsm-tree.md](../api/lsm-tree.md)
+        - **Transactions**: Transaction API in [transactions.md](../api/transactions.md)
+        - **Concurrency**: Concurrency control in [concurrency.md](../api/concurrency.md)
 
         EOF
 
@@ -157,12 +152,16 @@ jobs:
         echo "VERSION=$VERSION"
 
     - name: Build MkDocs Site
-      working-directory: ./docs
-      run: mkdocs build --site-dir ../site
+      run: mkdocs build
+
+    - name: Configure Git
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
     - name: Deploy with Mike
       run: |
-        cd docs
         # Deploy current version
         mike deploy --push --title "Documentation" ${{ steps.version.outputs.version }}
         

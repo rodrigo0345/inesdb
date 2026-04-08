@@ -3,31 +3,13 @@ site_description: Comprehensive documentation for the OMAG on-disk database stor
 repo_url: https://github.com/rodrigo0345/omag
 repo_name: omag
 edit_uri: edit/main/docs/
-docs_dir: '.'
-site_dir: '../site'
+docs_dir: 'docs'
+site_dir: 'site'
 
 theme:
-  name: material
+  name: readthedocs
   logo: images/logo.png
   favicon: images/favicon.png
-  palette:
-    - scheme: default
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - scheme: slate
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
-  features:
-    - navigation.instant
-    - navigation.tracking
-    - navigation.top
-    - navigation.sections
-    - navigation.expand
-    - toc.integrate
-    - search.suggest
-    - search.highlight
 
 nav:
   - Home: index.md
@@ -61,9 +43,6 @@ markdown_extensions:
   - pymdownx.highlight
   - toc:
       permalink: true
-  - pymdownx.emoji:
-      emoji_index: !!python/name:pymdownx.emoji.twemoji
-      emoji_generator: !!python/name:pymdownx.emoji.to_svg
   - pymdownx.tasklist:
       custom_checkbox: true
 
@@ -74,4 +53,4 @@ plugins:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/rodrigo0345/omag
+      link: https://github.com/rodrigo0345/omag-db
