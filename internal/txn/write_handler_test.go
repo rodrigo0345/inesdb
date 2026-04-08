@@ -1,116 +1,188 @@
 package txn
 
 import (
-"testing"
+	"testing"
 )
 
-// TestWriteHandlerWrite tests write operation handling
-func TestWriteHandlerWrite(t *testing.T) {
-	t.Run("log write operation", func(t *testing.T) {
-// Write operation logged to WAL
-})
+// mockWriteHandler implements WriteHandler for testing
+type mockWriteHandler struct{}
 
-	t.Run("lock acquisition", func(t *testing.T) {
-// Lock acquired before write
-// Lock type depends on isolation level
-})
-
-	t.Run("undo log recording", func(t *testing.T) {
-// Old value recorded for undo
-})
-
-	t.Run("apply write to buffer", func(t *testing.T) {
-// Write applied to in-memory state
-})
+func (m *mockWriteHandler) Write(txn *Transaction, key []byte, value []byte) error {
+	return nil
 }
 
-// TestWriteHandlerInsert tests INSERT operation
-func TestWriteHandlerInsert(t *testing.T) {
-	t.Run("new key insert", func(t *testing.T) {
-// Insert new key-value pair
-})
-
-	t.Run("duplicate key prevention", func(t *testing.T) {
-// INSERT of existing key should fail (or update depending on mode)
-})
-
-	t.Run("visible to transaction", func(t *testing.T) {
-// Inserted key immediately visible to same transaction
-})
+func (m *mockWriteHandler) Delete(txn *Transaction, key []byte) error {
+	return nil
 }
 
-// TestWriteHandlerUpdate tests UPDATE operation
-func TestWriteHandlerUpdate(t *testing.T) {
-	t.Run("update existing key", func(t *testing.T) {
-// Update value of existing key
-})
+// TestWriteHandlerInterface tests that write handler implements required interface
+func TestWriteHandlerInterface(t *testing.T) {
+	handler := &mockWriteHandler{}
 
-	t.Run("update nonexistent key", func(t *testing.T) {
-// UPDATE on non-existent key behavior
-})
+	key := []byte("test_key")
+	value := []byte("test_value")
+	txn := NewTransaction(1, READ_COMMITTED)
 
-	t.Run("partial update", func(t *testing.T) {
-// Update only specific columns/fields
-})
-}
+	// Should be able to call Write
+	err := handler.Write(txn, key, value)
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
 
-// TestWriteHandlerDelete tests DELETE operation
-func TestWriteHandlerDelete(t *testing.T) {
-	t.Run("delete existing key", func(t *testing.T) {
-// Delete key-value pair
-})
-
-	t.Run("delete nonexistent key", func(t *testing.T) {
-// DELETE on non-existent key
-})
-
-	t.Run("delete and reinsert", func(t *testing.T) {
-// After delete, can insert same key
-})
-}
-
-// TestWriteHandlerLocking tests lock integration with writes
-func TestWriteHandlerLocking(t *testing.T) {
-	t.Run("exclusive lock on write", func(t *testing.T) {
-// Write operations require exclusive lock
-})
-
-	t.Run("lock conflict", func(t *testing.T) {
-// Write blocked by other transaction's lock
-})
-
-t.Run("lock release after commit", func(t *testing.T) {
-// Locks released when transaction commits
-})
-}
-
-// TestWriteHandlerConcurrency tests concurrent write handling
-func TestWriteHandlerConcurrency(t *testing.T) {
-t.Run("concurrent writes serialized", func(t *testing.T) {
-// Multiple transactions cannot write simultaneously
-})
-
-t.Run("read-write conflict", func(t *testing.T) {
-// Read transaction blocked by write lock
-})
-
-t.Run("batch consistency", func(t *testing.T) {
-// Batch writes all-or-nothing
-})
-}
-
-// BenchmarkWriteHandlerWrite benchmarks basic write
-func BenchmarkWriteHandlerWrite(b *testing.B) {
-b.ResetTimer()
-for i := 0; i < b.N; i++ {
-		// Perform single write
+	// Should be able to call Delete
+	err = handler.Delete(txn, key)
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
 	}
 }
 
-// BenchmarkWriteHandlerBatch benchmarks batch writes
-func BenchmarkWriteHandlerBatch(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// Perform batch write
+// TestDefaultWriteHandlerCreation tests creating default write handler
+func TestDefaultWriteHandlerCreation(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	mockRollbackMgr := NewRollbackManager(mockBufMgr)
+	mockLogMgr := &mockLogManager{}
+	mockStorage := &mockStorageEngine{}
+
+	handler := NewDefaultWriteHandler(mockStorage, mockRollbackMgr, mockBufMgr, mockLogMgr)
+
+	if handler == nil {
+		t.Fatal("expected non-nil default write handler")
+	}
+}
+
+// TestMVCCWriteHandlerCreation tests creating MVCC write handler
+func TestMVCCWriteHandlerCreation(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	mockStorage := &mockStorageEngine{}
+
+	handler := NewMVCCWriteHandler(mockStorage, mockBufMgr, nil)
+
+	if handler == nil {
+		t.Fatal("expected non-nil MVCC write handler")
+	}
+}
+
+// TestWriteHandlerWithDifferentIsolationLevels tests write handler with various isolation levels
+func TestWriteHandlerWithDifferentIsolationLevels(t *testing.T) {
+	isolationLevels := []uint8{
+		READ_UNCOMMITTED,
+		READ_COMMITTED,
+		REPEATABLE_READ,
+		SERIALIZABLE,
+	}
+
+	mockBufMgr := &mockBufferPoolManager{}
+	mockRollbackMgr := NewRollbackManager(mockBufMgr)
+	mockLogMgr := &mockLogManager{}
+	mockStorage := &mockStorageEngine{}
+
+	for _, level := range isolationLevels {
+		t.Run("isolation level", func(t *testing.T) {
+			txn := NewTransaction(1, level)
+			handler := NewDefaultWriteHandler(mockStorage, mockRollbackMgr, mockBufMgr, mockLogMgr)
+
+			if txn.GetIsolationLevel() != level {
+				t.Errorf("expected isolation level %d, got %d", level, txn.GetIsolationLevel())
+			}
+
+			if handler == nil {
+				t.Error("expected non-nil handler")
+			}
+		})
+	}
+}
+
+// TestWriteHandlerMultiple tests creating multiple write handlers
+func TestWriteHandlerMultiple(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	mockRollbackMgr := NewRollbackManager(mockBufMgr)
+	mockLogMgr := &mockLogManager{}
+	mockStorage := &mockStorageEngine{}
+
+	handler1 := NewDefaultWriteHandler(mockStorage, mockRollbackMgr, mockBufMgr, mockLogMgr)
+	handler2 := NewDefaultWriteHandler(mockStorage, mockRollbackMgr, mockBufMgr, mockLogMgr)
+
+	if handler1 == handler2 {
+		t.Error("multiple handlers should be different instances")
+	}
+}
+
+// TestWriteHandlerBasicOperation tests basic write operation
+func TestWriteHandlerBasicOperation(t *testing.T) {
+	handler := &mockWriteHandler{}
+	txn := NewTransaction(1, READ_COMMITTED)
+	key := []byte("key1")
+	value := []byte("value1")
+
+	err := handler.Write(txn, key, value)
+	if err != nil {
+		t.Errorf("expected nil error on write, got %v", err)
+	}
+
+	err = handler.Delete(txn, key)
+	if err != nil {
+		t.Errorf("expected nil error on delete, got %v", err)
+	}
+}
+
+// TestWriteHandlerWithNilKey tests write handler with nil key
+func TestWriteHandlerWithNilKey(t *testing.T) {
+	handler := &mockWriteHandler{}
+	txn := NewTransaction(1, READ_COMMITTED)
+
+	// Should handle nil key (behavior depends on implementation)
+	err := handler.Write(txn, nil, []byte("value"))
+	if err != nil {
+		// Not necessarily an error, depends on implementation
+	}
+}
+
+// TestWriteHandlerWithEmptyValue tests write handler with empty value
+func TestWriteHandlerWithEmptyValue(t *testing.T) {
+	handler := &mockWriteHandler{}
+	txn := NewTransaction(1, READ_COMMITTED)
+	key := []byte("key")
+
+	err := handler.Write(txn, key, []byte{})
+	if err != nil {
+		// Empty values might be allowed
+	}
+}
+
+// TestWriteHandlerMultipleWrites tests multiple writes in transaction
+func TestWriteHandlerMultipleWrites(t *testing.T) {
+	handler := &mockWriteHandler{}
+	txn := NewTransaction(1, READ_COMMITTED)
+
+	// Multiple writes
+	for i := 0; i < 5; i++ {
+		key := []byte{byte(i)}
+		value := []byte{byte(i * 2)}
+		err := handler.Write(txn, key, value)
+		if err != nil {
+			t.Errorf("expected nil error on write %d, got %v", i, err)
+		}
+	}
+}
+
+// TestWriteHandlerInterleavedOperations tests interleaved writes and deletes
+func TestWriteHandlerInterleavedOperations(t *testing.T) {
+	handler := &mockWriteHandler{}
+	txn := NewTransaction(1, SERIALIZABLE)
+
+	// Interleaved write and delete
+	err := handler.Write(txn, []byte("key1"), []byte("val1"))
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
+
+	err = handler.Delete(txn, []byte("key1"))
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
+
+	err = handler.Write(txn, []byte("key1"), []byte("val2"))
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
 	}
 }

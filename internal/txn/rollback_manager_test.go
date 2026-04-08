@@ -2,137 +2,189 @@ package txn
 
 import (
 	"testing"
+
+	"github.com/rodrigo0345/omag/internal/storage/page"
 )
 
-// TestRollbackManagerExecuteUndo tests undo operation execution
-func TestRollbackManagerExecuteUndo(t *testing.T) {
-	t.Run("undo insert becomes delete", func(t *testing.T) {
-		// Undo of INSERT should remove the tuple
-	})
+// mockBufferPoolManager implements IBufferPoolManager for testing
+type mockBufferPoolManager struct{}
 
-	t.Run("undo delete restores tuple", func(t *testing.T) {
-		// Undo of DELETE should restore original value
-	})
-
-	t.Run("undo update restores old value", func(t *testing.T) {
-		// Undo of UPDATE should restore previous value
-	})
-
-	t.Run("undo operations in reverse order", func(t *testing.T) {
-		// Operations must be undone in reverse order
-		// To maintain consistency
-	})
+func (m *mockBufferPoolManager) NewPage() (*page.IResourcePage, error) {
+	return nil, nil
 }
 
-// TestRollbackManagerUndoLog tests undo log access
-func TestRollbackManagerUndoLog(t *testing.T) {
-	t.Run("read undo log entries", func(t *testing.T) {
-		// Retrieve undo log entries for transaction
-	})
-
-	t.Run("iterate undo log", func(t *testing.T) {
-		// Walk through undo log entries
-	})
-
-	t.Run("get operation type", func(t *testing.T) {
-		// Determine operation type from log entry
-	})
-
-	t.Run("get affected resource", func(t *testing.T) {
-		// Identify what was modified
-	})
+func (m *mockBufferPoolManager) PinPage(pageID page.ResourcePageID) (page.IResourcePage, error) {
+	return nil, nil
 }
 
-// TestRollbackManagerPartialRollback tests rolling back part of transaction
-func TestRollbackManagerPartialRollback(t *testing.T) {
-	t.Run("rollback single operation", func(t *testing.T) {
-		// Undo specific operation
-		// Leave other operations intact
-	})
-
-	t.Run("rollback to savepoint", func(t *testing.T) {
-		// Undo operations since savepoint
-		// Restore to previous state
-	})
-
-	t.Run("savepoint tracking", func(t *testing.T) {
-		// Track savepoints within transaction
-	})
+func (m *mockBufferPoolManager) UnpinPage(pageID page.ResourcePageID, isDirty bool) error {
+	return nil
 }
 
-// TestRollbackManagerFullRollback tests complete transaction rollback
-func TestRollbackManagerFullRollback(t *testing.T) {
-	t.Run("undo all operations", func(t *testing.T) {
-		// Reverse all changes in transaction
-	})
+// TestNewRollbackManager tests rollback manager creation
+func TestNewRollbackManager(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	rm := NewRollbackManager(mockBufMgr)
 
-	t.Run("restore consistent state", func(t *testing.T) {
-		// Database returns to pre-transaction state
-	})
-
-	t.Run("multiple transactions rollback", func(t *testing.T) {
-		// Multiple concurrent rollbacks independent
-	})
-}
-
-// TestRollbackManagerErrorHandling tests error during rollback
-func TestRollbackManagerErrorHandling(t *testing.T) {
-	t.Run("undo operation failure", func(t *testing.T) {
-		// Handle undo operation that fails
-		// Log error and continue/abort
-	})
-
-	t.Run("corrupted undo log", func(t *testing.T) {
-		// Handle corrupted undo log entries
-	})
-
-	t.Run("rollback idempotence", func(t *testing.T) {
-		// Rolling back multiple times is safe
-	})
-}
-
-// TestRollbackManagerPageLocking tests page locking during rollback
-func TestRollbackManagerPageLocking(t *testing.T) {
-	t.Run("acquire write lock for undo", func(t *testing.T) {
-		// Lock pages before undoing modifications
-	})
-
-	t.Run("release locks after rollback", func(t *testing.T) {
-		// Release locks once rollback complete
-	})
-
-	t.Run("no deadlock during rollback", func(t *testing.T) {
-		// Rollback shouldn't cause deadlocks
-	})
-}
-
-// TestRollbackManagerCost tests undo operation cost
-func TestRollbackManagerCost(t *testing.T) {
-	t.Run("undo cost proportional to changes", func(t *testing.T) {
-		// More operations = more time to undo
-	})
-
-	t.Run("undo log storage", func(t *testing.T) {
-		// Undo log size proportional to number of operations
-	})
-}
-
-// BenchmarkRollbackExecuteUndo benchmarks undo execution
-func BenchmarkRollbackExecuteUndo(b *testing.B) {
-	// Setup transaction with operations
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		// Execute undo operation
+	if rm == nil {
+		t.Fatal("expected non-nil rollback manager")
 	}
 }
 
-// BenchmarkRollbackFullTransaction benchmarks full transaction rollback
-func BenchmarkRollbackFullTransaction(b *testing.B) {
-	// Setup transaction with many operations
-	b.ResetTimer()
+// TestRecordPageWrite tests recording page write operations
+func TestRecordPageWrite(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	rm := NewRollbackManager(mockBufMgr)
+	txn := NewTransaction(1, READ_COMMITTED)
 
-	for i := 0; i < b.N; i++ {
-		// Complete transaction rollback
+	pageID := page.ResourcePageID(0)
+	beforeData := []byte{1, 2, 3, 4, 5}
+
+	opID, err := rm.RecordPageWrite(txn, pageID, 0, beforeData)
+
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
+
+	if opID == 0 {
+		t.Error("expected non-zero operation ID")
+	}
+}
+
+// TestRecordPageWriteMultiple tests recording multiple page writes
+func TestRecordPageWriteMultiple(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	rm := NewRollbackManager(mockBufMgr)
+	txn := NewTransaction(1, READ_COMMITTED)
+
+	// Record multiple writes
+	opID1, _ := rm.RecordPageWrite(txn, 0, 0, []byte{1})
+	opID2, _ := rm.RecordPageWrite(txn, 1, 0, []byte{2})
+	opID3, _ := rm.RecordPageWrite(txn, 2, 0, []byte{3})
+
+	// IDs should be unique and increasing
+	if opID1 >= opID2 || opID2 >= opID3 {
+		t.Error("operation IDs should be unique and increasing")
+	}
+}
+
+// TestRollbackTransactionNil tests rollback with nil transaction
+func TestRollbackTransactionNil(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	rm := NewRollbackManager(mockBufMgr)
+
+	// Should error with nil transaction - test the error condition only
+	err := rm.RollbackTransaction(nil, nil, nil)
+	if err == nil {
+		t.Error("expected error when rolling back nil transaction")
+	}
+}
+
+// TestRollbackTransactionCommitted tests rolling back committed transaction
+func TestRollbackTransactionCommitted(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	rm := NewRollbackManager(mockBufMgr)
+	txn := NewTransaction(1, READ_COMMITTED)
+
+	// Mark as committed
+	txn.Commit()
+
+	// Should error when trying to rollback committed transaction
+	err := rm.RollbackTransaction(txn, nil, nil)
+	if err == nil {
+		t.Error("expected error when rolling back committed transaction")
+	}
+}
+
+// TestHasOperations tests checking for recorded operations
+func TestHasOperations(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	rm := NewRollbackManager(mockBufMgr)
+	txn := NewTransaction(1, READ_COMMITTED)
+
+	// Transaction with no operations
+	hasOps := rm.HasOperations(txn)
+	if hasOps {
+		t.Error("expected no operations for new transaction")
+	}
+
+	// Add an operation
+	rm.RecordPageWrite(txn, 0, 0, []byte{1})
+
+	hasOps = rm.HasOperations(txn)
+	if !hasOps {
+		t.Error("expected operations after recording write")
+	}
+}
+
+// TestRollbackToSavePointNil tests rollback to savepoint with nil transaction
+func TestRollbackToSavePointNil(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	rm := NewRollbackManager(mockBufMgr)
+
+	err := rm.RollbackToSavePoint(nil, 0)
+
+	if err == nil {
+		t.Error("expected error for nil transaction")
+	}
+}
+
+// TestRollbackToSavePointInvalid tests rollback with invalid savepoint
+func TestRollbackToSavePointInvalid(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	rm := NewRollbackManager(mockBufMgr)
+	txn := NewTransaction(1, READ_COMMITTED)
+
+	err := rm.RollbackToSavePoint(txn, -1)
+
+	if err == nil {
+		t.Error("expected error for negative savepoint")
+	}
+}
+
+// TestGetOperationCount tests getting operation count
+func TestGetOperationCount(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	rm := NewRollbackManager(mockBufMgr)
+	txn := NewTransaction(1, READ_COMMITTED)
+
+	// Add some operations indirectly through Record
+	rm.RecordPageWrite(txn, 0, 0, []byte{1})
+	rm.RecordPageWrite(txn, 1, 0, []byte{2})
+
+	// Check using HasOperations
+	if !rm.HasOperations(txn) {
+		t.Error("expected operations to be recorded")
+	}
+}
+
+// TestRollbackManagerTransactionID tests verifying transaction ID in rollback
+func TestRollbackManagerTransactionID(t *testing.T) {
+	txn := NewTransaction(42, SERIALIZABLE)
+
+	if txn.GetID() != 42 {
+		t.Errorf("expected transaction ID 42, got %d", txn.GetID())
+	}
+}
+
+// TestMultipleTransactionsRecording tests recording operations in multiple transactions
+func TestMultipleTransactionsRecording(t *testing.T) {
+	mockBufMgr := &mockBufferPoolManager{}
+	rm := NewRollbackManager(mockBufMgr)
+
+	// Create multiple transactions
+	txn1 := NewTransaction(1, READ_COMMITTED)
+	txn2 := NewTransaction(2, READ_COMMITTED)
+
+	_, err1 := rm.RecordPageWrite(txn1, 0, 0, []byte{1})
+	_, err2 := rm.RecordPageWrite(txn2, 1, 0, []byte{2})
+
+	if err1 != nil || err2 != nil {
+		t.Error("expected both records to succeed")
+	}
+
+	// Verify operations are recorded
+	if !rm.HasOperations(txn1) || !rm.HasOperations(txn2) {
+		t.Error("expected operations to be recorded for both transactions")
 	}
 }

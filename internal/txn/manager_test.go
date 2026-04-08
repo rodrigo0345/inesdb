@@ -2,152 +2,186 @@ package txn
 
 import (
 	"testing"
+
+	"github.com/rodrigo0345/omag/internal/txn/log"
 )
 
-// TestManagerBegin tests beginning transactions
-func TestManagerBegin(t *testing.T) {
-	t.Run("create transaction", func(t *testing.T) {
-		// Should create new transaction with unique ID
-	})
+// mockIsolationManager implements IIsolationManager for testing
+type mockIsolationManager struct{}
 
-	t.Run("multiple concurrent transactions", func(t *testing.T) {
-		// Should support multiple active transactions
-	})
-
-	t.Run("transaction id uniqueness", func(t *testing.T) {
-		// All transaction IDs should be unique
-	})
+func (m *mockIsolationManager) BeginTransaction(isolationLevel uint8) int64 {
+	return 1
 }
 
-// TestManagerCommit tests committing transactions
-func TestManagerCommit(t *testing.T) {
-	t.Run("mark as committed", func(t *testing.T) {
-		// Transaction should be marked in log as committed
-	})
-
-	t.Run("release locks", func(t *testing.T) {
-		// All held locks should be released
-	})
-
-	t.Run("publish changes", func(t *testing.T) {
-		// Changes should become visible to other transactions
-	})
+func (m *mockIsolationManager) Read(txnID int64, key []byte) ([]byte, error) {
+	return nil, nil
 }
 
-// TestManagerAbort tests aborting transactions
-func TestManagerAbort(t *testing.T) {
-	t.Run("undo changes", func(t *testing.T) {
-		// Call undo manager to reverse all operations
-	})
-
-	t.Run("release locks", func(t *testing.T) {
-		// Release any held locks
-	})
-
-	t.Run("mark as aborted", func(t *testing.T) {
-		// Mark transaction as aborted in log
-	})
+func (m *mockIsolationManager) Write(txnID int64, key []byte, value []byte) error {
+	return nil
 }
 
-// TestManagerIsolationPolicy tests isolation strategy selection
-func TestManagerIsolationPolicy(t *testing.T) {
-	isolationLevels := []string{
-		"READ_UNCOMMITTED",
-		"READ_COMMITTED",
-		"REPEATABLE_READ",
-		"SERIALIZABLE",
-	}
-
-	for _, level := range isolationLevels {
-		t.Run("isolation level: "+level, func(t *testing.T) {
-			// Should select appropriate isolation manager
-			// Should apply correct visibility rules
-		})
-	}
+func (m *mockIsolationManager) Commit(txnID int64) error {
+	return nil
 }
 
-// TestManagerVisibility tests transaction visibility tracking
-func TestManagerVisibility(t *testing.T) {
-	t.Run("active transaction list", func(t *testing.T) {
-		// Track all active transactions
-	})
-
-	t.Run("committed transaction tracking", func(t *testing.T) {
-		// Track committed transactions for visibility
-	})
-
-	t.Run("garbage collection", func(t *testing.T) {
-		// Remove old aborted transactions
-		// Clean up obsolete versions
-	})
+func (m *mockIsolationManager) Abort(txnID int64) error {
+	return nil
 }
 
-// TestManagerLockIntegration tests lock manager integration
-func TestManagerLockIntegration(t *testing.T) {
-	t.Run("acquire locks for writes", func(t *testing.T) {
-		// Integration with lock manager
-		// Request locks for write operations
-	})
-
-	t.Run("deadlock detection", func(t *testing.T) {
-		// Detect and resolve deadlocks
-	})
-
-	t.Run("lock release on commit", func(t *testing.T) {
-		// Release locks when transaction commits
-	})
+func (m *mockIsolationManager) Close() error {
+	return nil
 }
 
-// TestManagerWALIntegration tests WAL integration
-func TestManagerWALIntegration(t *testing.T) {
-	t.Run("log all operations", func(t *testing.T) {
-		// Each operation logged before execution
-	})
+// mockLogManager implements ILogManager for testing
+type mockLogManager struct{}
 
-	t.Run("log transaction boundaries", func(t *testing.T) {
-		// Begin and commit/abort logged
-	})
-
-	t.Run("durability guarantee", func(t *testing.T) {
-		// Commits not acknowledged until WAL flushed
-	})
+func (m *mockLogManager) AppendLogRecord(record log.ILogRecord) (log.LSN, error) {
+	return 0, nil
 }
 
-// TestManagerConcurrency tests concurrent transaction management
-func TestManagerConcurrency(t *testing.T) {
-	t.Run("multiple concurrent transactions", func(t *testing.T) {
-		// Support many simultaneous transactions
-	})
-
-	t.Run("isolation enforcement", func(t *testing.T) {
-		// Proper isolation between concurrent transactions
-	})
-
-	t.Run("conflict detection", func(t *testing.T) {
-		// Detect conflicting accesses
-	})
-
-	t.Run("serialization", func(t *testing.T) {
-		// Ensure all concurrent txns serialize correctly
-	})
+func (m *mockLogManager) Flush(upToLSN log.LSN) error {
+	return nil
 }
 
-// BenchmarkManagerBegin benchmarks transaction creation
-func BenchmarkManagerBegin(b *testing.B) {
-	// Setup manager
-	b.ResetTimer()
+func (m *mockLogManager) Recover() (*log.RecoveryState, error) {
+	return nil, nil
+}
 
-	for i := 0; i < b.N; i++ {
-		// Begin new transaction
+func (m *mockLogManager) Checkpoint() error {
+	return nil
+}
+
+func (m *mockLogManager) GetLastCheckpointLSN() uint64 {
+	return 0
+}
+
+func (m *mockLogManager) Close() error {
+	return nil
+}
+
+func (m *mockLogManager) ReadAllRecords() ([]log.WALRecord, error) {
+	return nil, nil
+}
+
+// mockStorageEngine implements StorageEngine for testing
+type mockStorageEngine struct{}
+
+func (m *mockStorageEngine) Get(key []byte) ([]byte, error) {
+	return nil, nil
+}
+
+func (m *mockStorageEngine) Put(key []byte, value []byte) error {
+	return nil
+}
+
+func (m *mockStorageEngine) Delete(key []byte) error {
+	return nil
+}
+
+// TestNewTransactionManager tests creating a transaction manager
+func TestNewTransactionManager(t *testing.T) {
+	mockIsolMgr := &mockIsolationManager{}
+	mockLogMgr := &mockLogManager{}
+	mockBufMgr := &mockBufferPoolManager{}
+	mockStorage := &mockStorageEngine{}
+
+	tm := NewTransactionManager(mockIsolMgr, mockLogMgr, mockBufMgr, mockStorage)
+
+	if tm == nil {
+		t.Fatal("expected non-nil transaction manager")
 	}
 }
 
-// BenchmarkManagerCommit benchmarks commit performance
-func BenchmarkManagerCommit(b *testing.B) {
-	// Setup manager with transactions
-	b.ResetTimer()
+// TestNewTransactionManagerWithoutLog tests creating manager without log
+func TestNewTransactionManagerWithoutLog(t *testing.T) {
+	mockIsolMgr := &mockIsolationManager{}
+	mockBufMgr := &mockBufferPoolManager{}
+	mockStorage := &mockStorageEngine{}
 
-	for i := 0; i < b.N; i++ {
-		// Commit transaction
+	tm := NewTransactionManager(mockIsolMgr, nil, mockBufMgr, mockStorage)
+
+	if tm == nil {
+		t.Fatal("expected non-nil transaction manager")
+	}
+}
+
+// TestGetRollbackManager tests retrieving rollback manager
+func TestGetRollbackManager(t *testing.T) {
+	mockIsolMgr := &mockIsolationManager{}
+	mockLogMgr := &mockLogManager{}
+	mockBufMgr := &mockBufferPoolManager{}
+	mockStorage := &mockStorageEngine{}
+
+	tm := NewTransactionManager(mockIsolMgr, mockLogMgr, mockBufMgr, mockStorage)
+	rm := tm.GetRollbackManager()
+
+	if rm == nil {
+		t.Fatal("expected non-nil rollback manager")
+	}
+}
+
+// TestGetWriteHandler tests retrieving write handler
+func TestGetWriteHandler(t *testing.T) {
+	mockIsolMgr := &mockIsolationManager{}
+	mockLogMgr := &mockLogManager{}
+	mockBufMgr := &mockBufferPoolManager{}
+	mockStorage := &mockStorageEngine{}
+
+	tm := NewTransactionManager(mockIsolMgr, mockLogMgr, mockBufMgr, mockStorage)
+	wh := tm.GetWriteHandler()
+
+	if wh == nil {
+		t.Fatal("expected non-nil write handler")
+	}
+}
+
+// TestTransactionManagerIntegration tests integration of components
+func TestTransactionManagerIntegration(t *testing.T) {
+	mockIsolMgr := &mockIsolationManager{}
+	mockLogMgr := &mockLogManager{}
+	mockBufMgr := &mockBufferPoolManager{}
+	mockStorage := &mockStorageEngine{}
+
+	tm := NewTransactionManager(mockIsolMgr, mockLogMgr, mockBufMgr, mockStorage)
+
+	// Should have all components available
+	if tm.GetRollbackManager() == nil {
+		t.Error("rollback manager should not be nil")
+	}
+
+	if tm.GetWriteHandler() == nil {
+		t.Error("write handler should not be nil")
+	}
+}
+
+// TestTransactionManagerMultiple tests creating multiple managers
+func TestTransactionManagerMultiple(t *testing.T) {
+	mockIsolMgr := &mockIsolationManager{}
+	mockLogMgr := &mockLogManager{}
+	mockBufMgr := &mockBufferPoolManager{}
+	mockStorage := &mockStorageEngine{}
+
+	tm1 := NewTransactionManager(mockIsolMgr, mockLogMgr, mockBufMgr, mockStorage)
+	tm2 := NewTransactionManager(mockIsolMgr, mockLogMgr, mockBufMgr, mockStorage)
+
+	if tm1 == tm2 {
+		t.Error("multiple transaction managers should be different instances")
+	}
+}
+
+// TestTransactionManagerWithDifferentIsolationLevels tests with various isolation levels
+func TestTransactionManagerWithDifferentIsolationLevels(t *testing.T) {
+	mockIsolMgr := &mockIsolationManager{}
+	mockLogMgr := &mockLogManager{}
+	mockBufMgr := &mockBufferPoolManager{}
+	mockStorage := &mockStorageEngine{}
+
+	// Create transaction manager
+	tm := NewTransactionManager(mockIsolMgr, mockLogMgr, mockBufMgr, mockStorage)
+
+	// Manager should work regardless of isolation level
+	if tm == nil {
+		t.Error("expected manager to be created successfully")
 	}
 }

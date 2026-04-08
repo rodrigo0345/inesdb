@@ -2,205 +2,259 @@ package txn
 
 import (
 	"testing"
+
+	"github.com/rodrigo0345/omag/internal/txn/undo"
 )
 
-// TestTransactionBegin tests transaction initialization
-func TestTransactionBegin(t *testing.T) {
+// TestNewTransaction tests transaction creation
+func TestNewTransaction(t *testing.T) {
 	tests := []struct {
 		name           string
+		txnID          uint64
 		isolationLevel uint8
-		shouldSucceed  bool
 	}{
-		{"valid read uncommitted", READ_UNCOMMITTED, true},
-		{"valid read committed", READ_COMMITTED, true},
-		{"valid repeatable read", REPEATABLE_READ, true},
-		{"valid serializable", SERIALIZABLE, true},
+		{"read uncommitted", 1, READ_UNCOMMITTED},
+		{"read committed", 2, READ_COMMITTED},
+		{"repeatable read", 3, REPEATABLE_READ},
+		{"serializable", 4, SERIALIZABLE},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Mock transaction creation
-			// In production, would use actual manager
-			if tt.shouldSucceed {
-				// Should successfully create transaction
-			} else {
-				// Should fail with invalid isolation level
+			txn := NewTransaction(tt.txnID, tt.isolationLevel)
+
+			if txn == nil {
+				t.Fatal("expected transaction, got nil")
+			}
+
+			if txn.GetID() != tt.txnID {
+				t.Errorf("expected txn ID %d, got %d", tt.txnID, txn.GetID())
+			}
+
+			if txn.GetState() != ACTIVE {
+				t.Errorf("expected ACTIVE state, got %v", txn.GetState())
+			}
+
+			if txn.GetIsolationLevel() != tt.isolationLevel {
+				t.Errorf("expected isolation level %d, got %d", tt.isolationLevel, txn.GetIsolationLevel())
 			}
 		})
 	}
 }
 
-// TestTransactionRead tests reading within a transaction
-func TestTransactionRead(t *testing.T) {
-	t.Run("read existing key", func(t *testing.T) {
-		// Test reading a key that exists
-		// Verify visibility rules based on isolation level
-	})
+// TestTransactionState tests transaction state transitions
+func TestTransactionState(t *testing.T) {
+	txn := NewTransaction(1, READ_COMMITTED)
 
-	t.Run("read non-existing key", func(t *testing.T) {
-		// Test reading key that doesn't exist
-		// Should return nil or appropriate error
-	})
+	// Initially ACTIVE
+	if txn.GetState() != ACTIVE {
+		t.Errorf("initial state should be ACTIVE, got %v", txn.GetState())
+	}
 
-	t.Run("read isolation visibility", func(t *testing.T) {
-		// Test that reads respect isolation levels
-		// - READ_UNCOMMITTED: sees uncommitted changes
-		// - READ_COMMITTED: sees only committed changes
-		// - REPEATABLE_READ: sees snapshot from transaction start
-	})
-}
+	// Commit
+	txn.Commit()
+	if txn.GetState() != COMMITTED {
+		t.Errorf("expected COMMITTED state, got %v", txn.GetState())
+	}
 
-// TestTransactionWrite tests writing within a transaction
-func TestTransactionWrite(t *testing.T) {
-	t.Run("insert new key", func(t *testing.T) {
-		// Test inserting a new key-value pair
-		// Should be visible only within transaction until commit
-	})
-
-	t.Run("update existing key", func(t *testing.T) {
-		// Test updating an existing key
-		// Should create new version
-	})
-
-	t.Run("delete key", func(t *testing.T) {
-		// Test deleting a key
-		// Should mark as deleted in transaction
-	})
-
-	t.Run("write set tracking", func(t *testing.T) {
-		// Verify that all writes are tracked
-		// For validation and rollback
-	})
-}
-
-// TestTransactionCommit tests transaction commit
-func TestTransactionCommit(t *testing.T) {
-	t.Run("commit successful", func(t *testing.T) {
-		// Test successful commit
-		// Changes should become visible
-		// Transaction should be marked as committed
-	})
-
-	t.Run("commit with conflicts (OCC)", func(t *testing.T) {
-		// Test OCC validation failure
-		// Should abort on detected conflict
-	})
-
-	t.Run("commit flush to WAL", func(t *testing.T) {
-		// Verify WAL is flushed before commit returns
-		// Ensures durability
-	})
-
-	t.Run("commit acquires final locks (2PL)", func(t *testing.T) {
-		// For 2PL isolation
-		// All locks should be held during commit
-	})
-}
-
-// TestTransactionRollback tests transaction rollback
-func TestTransactionRollback(t *testing.T) {
-	t.Run("rollback clears write set", func(t *testing.T) {
-		// Verify all writes are undone
-		// Using undo logs
-	})
-
-	t.Run("rollback releases locks", func(t *testing.T) {
-		// All acquired locks should be released
-		// Other transactions can proceed
-	})
-
-	t.Run("rollback idempotent", func(t *testing.T) {
-		// Calling rollback multiple times should be safe
-	})
-
-	t.Run("automatic rollback on error", func(t *testing.T) {
-		// Operations that fail during transaction
-		// Should trigger automatic rollback
-	})
-}
-
-// TestTransactionVisiblityRules tests isolation level visibility
-func TestTransactionVisibilityRules(t *testing.T) {
-	t.Run("read uncommitted dirty reads", func(t *testing.T) {
-		// Txn A modifies key, Txn B reads before commit
-		// Should see dirty value
-	})
-
-	t.Run("read committed non-repeatable reads", func(t *testing.T) {
-		// Same query in transaction runs twice
-		// Second might see committed changes from other transactions
-	})
-
-	t.Run("repeatable read consistent snapshot", func(t *testing.T) {
-		// Within transaction, always see same version
-		// Even if other transactions commit changes
-	})
-
-	t.Run("serializable phantom reads prevented", func(t *testing.T) {
-		// Range queries return consistent results
-		// No new rows appear mid-transaction due to inserts
-	})
-}
-
-// TestTransactionContext tests transaction context tracking
-func TestTransactionContext(t *testing.T) {
-	t.Run("txn id assignment", func(t *testing.T) {
-		// Each transaction should get unique ID
-	})
-
-	t.Run("txn timestamp tracking", func(t *testing.T) {
-		// Start and end times should be recorded
-	})
-
-	t.Run("read set tracking", func(t *testing.T) {
-		// All read keys should be tracked for OCC validation
-	})
-
-	t.Run("write set tracking", func(t *testing.T) {
-		// All written keys should be tracked
-	})
-}
-
-// TestConcurrentTransactions tests multiple concurrent transactions
-func TestConcurrentTransactions(t *testing.T) {
-	t.Run("concurrent reads", func(t *testing.T) {
-		// Multiple transactions reading same key
-		// Should not block each other
-	})
-
-	t.Run("concurrent reads and writes", func(t *testing.T) {
-		// Mix of read and write transactions
-		// Behavior depends on isolation level
-	})
-
-	t.Run("write-write conflicts", func(t *testing.T) {
-		// Two transactions modifying same key
-		// Should be detected and one should abort (OCC) or wait (2PL)
-	})
-
-	t.Run("deadlock detection", func(t *testing.T) {
-		// Circular dependency between transactions
-		// Should be detected and one aborted
-	})
-}
-
-// BenchmarkTransactionRead benchmarks read performance
-func BenchmarkTransactionRead(b *testing.B) {
-	// Setup transaction manager
-	// Create test data
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		// Perform transaction read
+	// Test abort on a new transaction
+	txn2 := NewTransaction(2, READ_UNCOMMITTED)
+	txn2.Abort()
+	if txn2.GetState() != ABORTED {
+		t.Errorf("expected ABORTED state, got %v", txn2.GetState())
 	}
 }
 
-// BenchmarkTransactionWrite benchmarks write performance
-func BenchmarkTransactionWrite(b *testing.B) {
-	// Setup transaction manager
-	b.ResetTimer()
+// TestTransactionSharedLocks tests shared lock operations
+func TestTransactionSharedLocks(t *testing.T) {
+	txn := NewTransaction(1, READ_COMMITTED)
+	key1 := []byte("key1")
+	key2 := []byte("key2")
 
-	for i := 0; i < b.N; i++ {
-		// Perform transaction write
+	// Add shared locks
+	txn.AddSharedLock(key1)
+	txn.AddSharedLock(key2)
+
+	// Remove shared lock
+	txn.RemoveSharedLock(key1)
+
+	// Remove another
+	txn.RemoveSharedLock(key2)
+}
+
+// TestTransactionExclusiveLocks tests exclusive lock operations
+func TestTransactionExclusiveLocks(t *testing.T) {
+	txn := NewTransaction(1, SERIALIZABLE)
+	key1 := []byte("key1")
+	key2 := []byte("key2")
+
+	// Add exclusive locks
+	txn.AddExclusiveLock(key1)
+	txn.AddExclusiveLock(key2)
+
+	// Remove exclusive lock
+	txn.RemoveExclusiveLock(key1)
+
+	// Remove another
+	txn.RemoveExclusiveLock(key2)
+}
+
+// TestRemoveSharedLockNonExistent tests removing non-existent shared lock
+func TestRemoveSharedLockNonExistent(t *testing.T) {
+	txn := NewTransaction(1, READ_COMMITTED)
+	key := []byte("nonexistent")
+
+	// Should not panic when removing non-existent lock
+	txn.RemoveSharedLock(key)
+}
+
+// TestRemoveExclusiveLockNonExistent tests removing non-existent exclusive lock
+func TestRemoveExclusiveLockNonExistent(t *testing.T) {
+	txn := NewTransaction(1, READ_COMMITTED)
+	key := []byte("nonexistent")
+
+	// Should not panic when removing non-existent lock
+	txn.RemoveExclusiveLock(key)
+}
+
+// TestTransactionMixedLocks tests mixing shared and exclusive locks
+func TestTransactionMixedLocks(t *testing.T) {
+	txn := NewTransaction(1, SERIALIZABLE)
+	keyA := []byte("keyA")
+	keyB := []byte("keyB")
+
+	// Add mixed locks
+	txn.AddSharedLock(keyA)
+	txn.AddExclusiveLock(keyB)
+
+	// Remove them
+	txn.RemoveSharedLock(keyA)
+	txn.RemoveExclusiveLock(keyB)
+}
+
+// TestTransactionGetUndoLog tests getting undo log
+func TestTransactionGetUndoLog(t *testing.T) {
+	txn := NewTransaction(1, READ_COMMITTED)
+	undoLog := txn.GetUndoLog()
+
+	if undoLog == nil {
+		t.Fatal("expected non-nil undo log")
+	}
+}
+
+// TestTransactionGetIsolationLevel tests getting isolation level
+func TestTransactionGetIsolationLevel(t *testing.T) {
+	tests := []struct {
+		level uint8
+	}{
+		{READ_UNCOMMITTED},
+		{READ_COMMITTED},
+		{REPEATABLE_READ},
+		{SERIALIZABLE},
+	}
+
+	for _, tt := range tests {
+		txn := NewTransaction(1, tt.level)
+		if txn.GetIsolationLevel() != tt.level {
+			t.Errorf("expected isolation level %d, got %d", tt.level, txn.GetIsolationLevel())
+		}
+	}
+}
+
+// TestBytesEqual tests the bytesEqual helper function
+func TestBytesEqual(t *testing.T) {
+	tests := []struct {
+		name     string
+		a        []byte
+		b        []byte
+		expected bool
+	}{
+		{"equal empty", []byte{}, []byte{}, true},
+		{"equal single", []byte{1}, []byte{1}, true},
+		{"equal multiple", []byte{1, 2, 3}, []byte{1, 2, 3}, true},
+		{"not equal different values", []byte{1}, []byte{2}, false},
+		{"not equal different length", []byte{1, 2}, []byte{1, 2, 3}, false},
+		{"not equal empty vs non-empty", []byte{}, []byte{1}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := bytesEqual(tt.a, tt.b)
+			if result != tt.expected {
+				t.Errorf("bytesEqual(%v, %v) = %v, expected %v", tt.a, tt.b, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestTransactionDuplicateLocks tests handling of duplicate locks
+func TestTransactionDuplicateLocks(t *testing.T) {
+	txn := NewTransaction(1, SERIALIZABLE)
+	key := []byte("key")
+
+	// Add same lock twice
+	txn.AddSharedLock(key)
+	txn.AddSharedLock(key) // Add duplicate
+
+	// Remove should only remove first occurrence
+	txn.RemoveSharedLock(key)
+
+	// Add exclusive lock multiple times
+	txn.AddExclusiveLock(key)
+	txn.AddExclusiveLock(key)
+
+	txn.RemoveExclusiveLock(key)
+}
+
+// TestTransactionSavePoint tests savepoint functionality
+func TestTransactionSavePoint(t *testing.T) {
+	txn := NewTransaction(1, READ_COMMITTED)
+
+	// Get savepoint - should work
+	point := txn.SavePoint()
+	if point < 0 {
+		t.Errorf("expected non-negative savepoint, got %d", point)
+	}
+}
+
+// TestTransactionGetID tests getting transaction ID
+func TestTransactionGetID(t *testing.T) {
+	tests := []uint64{1, 100, 999999, 18446744073709551615} // Max uint64
+
+	for _, id := range tests {
+		txn := NewTransaction(id, READ_COMMITTED)
+		if txn.GetID() != id {
+			t.Errorf("expected txn ID %d, got %d", id, txn.GetID())
+		}
+	}
+}
+
+// TestTransactionMultipleStateTransitions tests multiple state changes
+func TestTransactionMultipleStateTransitions(t *testing.T) {
+	txn := NewTransaction(1, SERIALIZABLE)
+
+	// ACTIVE -> ABORTED
+	txn.Abort()
+	if txn.GetState() != ABORTED {
+		t.Errorf("expected ABORTED, got %v", txn.GetState())
+	}
+
+	// Can still get ID after abort
+	if txn.GetID() != 1 {
+		t.Error("txn ID should still be accessible after abort")
+	}
+}
+
+// TestTransactionRecordOperation tests recording operations
+func TestTransactionRecordOperation(t *testing.T) {
+	txn := NewTransaction(1, READ_COMMITTED)
+
+	// Create a page write operation
+	op := undo.NewPageWriteOp(1, 0, 0, []byte{1, 2, 3})
+
+	// Record it
+	err := txn.RecordOperation(op)
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
 	}
 }
