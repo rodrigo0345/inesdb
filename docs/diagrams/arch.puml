@@ -1,0 +1,334 @@
+@startuml
+skinparam linetype ortho
+skinparam PackageStyle rectangle
+skinparam roundcorner 10
+skinparam ParticipantPadding 10
+skinparam BoxPadding 10
+
+title Modular Database Storage & Concurrency Architecture (Fixed Syntax)
+
+' ========================================================
+' 1. UNDO & ROLLBACK LAYER (NEW - isolation from WAL/MVCC)
+' ========================================================
+package "Undo & Rollback Management" as UndoLayer #FFFACD {
+    interface "Operation" as IOperation <<interface>> #FFD700 {
+        + Undo(bufferMgr: IBufferManager) : error
+        + GetID() : uint64
+    }
+
+    class "PageWriteOp" as PageOp #FFFACD {
+        - opID: uint64
+        - pageID: ResourcePageID
+        - offset: uint16
+        - beforeData: []byte
+        + Undo(bufferMgr)
+    }
+
+    class "CompositeOp" as CompOp #FFFACD {
+        - opID: uint64
+        - operations: []Operation
+        + Undo(bufferMgr)
+    }
+
+    class "UndoLog" as UndoLog #FFFACD {
+        - txnID: uint64
+        - operations: []Operation
+        + RecordOp(op: Operation)
+        + Rollback(bufferMgr) : error
+        + RollbackToPoint(point: int) : error
+        + SavePoint() : int
+    }
+
+    class "RollbackManager" as RollbackMgr #FFFACD {
+        - bufferMgr: IBufferManager
+        - nextOpID: uint64
+        + RecordPageWrite(...) : opID
+        + RollbackTransaction(txn) : error
+        + RollbackToSavePoint(txn, point) : error
+    }
+
+    IOperation <|-- PageOp
+    IOperation <|-- CompOp
+    UndoLog *-- IOperation
+    RollbackMgr *-- UndoLog
+}
+
+' ========================================================
+' 1b. WRITE-AHEAD COORDINATION LAYER  (NEW - bridges logging + undo)
+' ========================================================
+package "Write-Ahead Coordination" as WriteAheadLayer #FFE4CD {
+    interface "WriteHandler" as IWriteHandler <<interface>> #FF8C00 {
+        + HandleWrite(txn, op: WriteOp) : error
+    }
+
+    class "DefaultWriteHandler" as DefaultWrite #FFE4CD {
+        - rollbackMgr: RollbackManager
+        - logManager: ILogManager (optional)
+        + HandleWrite(txn, op: WriteOp)
+        '  1. Capture before-image
+        '  2. Optionally log to WAL
+        '  3. Execute storage operation
+        '  4. Record to UndoLog
+    }
+
+    class "WriteOp" as WriteOpData #FFE4CD {
+        - key: []byte
+        - value: []byte
+        - pageID: ResourcePageID
+        - offset: uint16
+    }
+    
+    note on link from DefaultWrite to RollbackMgr
+        Records operations to UndoLog
+        No direct WAL dependency
+    end note
+}
+
+' ========================================================
+' 2. TRANSACTION & LOGICAL CONCURRENCY LAYER
+' ========================================================
+package "Transaction Management" as LogicalLayer #E0FFFF {
+    interface "IsolationManager" as IIsolation <<interface>> #ADD8E6 {
+        + BeginTransaction(IsoLevel)
+        + Read(TxID, Key) : Value
+        + Write(TxID, Key, Value)
+        + Commit(TxID)
+        + Abort(TxID)
+    }
+
+    class Transaction {
+        - txnID: uint64
+        - state: TxnState
+        - undoLog: *UndoLog
+        - locks: [][]byte
+        + RecordOperation(op: Operation) : error
+        + Rollback(bufferMgr) : error
+        + SavePoint() : int
+    }
+
+    class TransactionManager {
+        - isoHandler: IsolationManager
+        - writeHandler: WriteHandler
+        - bufferPool: IBufferManager
+        - indexMgr: IndexManager
+    }
+
+    class "TwoPhaseLockManager (2PL)" as 2PL #FFE4E1 {
+        - LockTable
+        - DeadlockDetector: Wait-For-Graph
+        - writeHandler: WriteHandler
+    }
+
+    class "MVCCManager" as MVCC #FFE4E1 {
+        - VersionStore
+        - TimestampOracle
+        - writeHandler: WriteHandler
+        + ProvideSnapshot()
+    }
+
+    class "OCCManager" as OCC #FFE4E1 {
+        - ReadSet
+        - WriteSet
+        - writeHandler: WriteHandler
+        + Validate()
+    }
+    
+    Transaction *-- UndoLog
+}
+
+' ========================================================
+' 2. LOGICAL INDEXING LAYER
+' ========================================================
+package "Logical Index Management" as IndexLayer #E0FFFF {
+    interface "Index" as IIndex <<interface>> #ADD8E6 {
+        + Insert(Key, Value)
+        + Get(Key) : Value
+        + Scan(Lower, Upper) : Iterator
+    }
+
+    class IndexManager {
+        - indexes: Map<IndexID, Index>
+    }
+
+    class "PrimaryIndex (Clustered)" as Primary #FFE4E1 {
+        - backend: StorageEngine
+    }
+
+    class "SecondaryIndex (Unclustered)" as Secondary #FFE4E1 {
+        - backend: StorageEngine
+    }
+}
+
+' ========================================================
+' 3. PHYSICAL ACCESS METHODS (STORAGE ENGINES)
+' ========================================================
+package "Physical Access Methods (Pure Storage)" as StorageLayer #FFFEF0 {
+    note top
+        ✗ NO WAL DEPENDENCIES
+        ✓ PURE DATA STRUCTURE OPERATIONS
+        ✓ Thread-safe via page latching
+        ✗ NO TRANSACTION AWARENESS
+    end note
+
+    interface "StorageEngine (KV)" as IStorage <<interface>> #ADD8E6 {
+        + Put(key: []byte, value: []byte) : error
+        + Get(key: []byte) : ([]byte, error)
+        + Delete(key: []byte) : error
+        + Scan(lower, upper) : Iterator
+    }
+
+    abstract class "BPlusTreeBackend" as BTree {
+        - bufferPool: IBufferManager
+        - latchMechanism: ILatchStrategy
+        + Split_Node()
+        + Merge_Node()
+        ___
+        Note: Calls only methods above
+        NO calls to logManager!
+    }
+
+    class "DiskBased_BPlusTree" as DiskBTree #FFF
+    class "LSMTreeBackend" as LSM #FFF {
+        - sstableMgr: SSTableManager
+        - compaction: Compactor
+    }
+}
+
+' ========================================================
+' 4. PHYSICAL CONCURRENCY (LATCHING STRATEGIES)
+' ========================================================
+package "Physical Structure Concurrency" as LatchLayer #FFDAB9 {
+    interface "ILatchStrategy" as ILatch <<interface>> #ADD8E6 {
+        + AcquirePageLatch(PageID, Mode)
+    }
+
+    class "LatchCrabbing (Pessimistic)" as LatchCrabbing #FFF
+    class "B-link_Logic (LinkPointers)" as BLink #FFF
+}
+
+' ========================================================
+' 5. RESOURCE MANAGEMENT LAYER
+' ========================================================
+package "Resource & I/O Management" as ResourceLayer #D3D3D3 {
+    interface "IBufferManager" as IBuffer <<interface>> #ADD8E6 {
+        + PinPage(PageID)
+        + UnpinPage(PageID, isDirty)
+    }
+    class BufferPoolManager #FFF
+
+    interface "ILogManager (WAL)" as IWAL <<interface>> #ADD8E6 {
+        + AppendLogRecord(LogRecord)
+        + FlushToDisk()
+    }
+    class WALImplementation #FFF
+}
+
+' ========================================================
+' RELATIONSHIPS & DEPENDENCIES
+' ========================================================
+
+' --- WRITE-AHEAD COORDINATION ---
+TransactionManager *-- IWriteHandler : provides
+IIsolation ..> IWriteHandler : uses for Write ops
+2PL ..> IWriteHandler : delegates Write
+MVCC ..> IWriteHandler : delegates Write
+OCC ..> IWriteHandler : delegates Write (validation phase)
+
+DefaultWrite *-- RollbackMgr : records ops
+DefaultWrite o-- IWAL : "optional:\nWAL logging"
+DefaultWrite o-- IStorage : calls storage ops
+
+' --- UNDO/ROLLBACK LAYER INTEGRATION ---
+TransactionManager *-- RollbackMgr : provides
+RollbackMgr o-- IBuffer : uses for undo
+IIsolation ..> RollbackMgr : uses for rollback on Abort
+
+' --- TRANSACTION MANAGEMENT ---
+TransactionManager *-- IIsolation
+TransactionManager *-- IndexManager
+TransactionManager *-- Transaction
+IndexManager *-- IIndex
+
+' --- STORAGE ENGINE ISOLATION ---
+IStorage ..> IBuffer : accesses pages ONLY
+BTree --|> IStorage
+LSM --|> IStorage
+BTree *-- IBuffer
+BTree *-- ILatch
+
+' --- OPTIONAL WAL (decoupled from storage) ---
+note on link from DefaultWrite to IWAL
+    Optional: only if durability is needed
+    Alternative: MVCC, pure undo log, etc.
+    Storage engine doesn't know about it
+end note
+
+' --- INHERITANCE HIERARCHIES ---
+IIsolation <|-- 2PL
+IIsolation <|-- MVCC
+IIsolation <|-- OCC
+
+IIndex <|-- Primary
+IIndex <|-- Secondary
+
+IWriteHandler <|-- DefaultWrite
+
+Primary *-- IStorage
+Secondary *-- IStorage
+
+BTree <|-- DiskBTree
+
+ILatch <|-- LatchCrabbing
+ILatch <|-- BLink
+
+IBuffer <|-- BufferPoolManager
+IWAL <|-- WALImplementation
+
+' --- LAYOUT & LAYERING ---
+UndoLayer -[hidden]down- WriteAheadLayer
+WriteAheadLayer -[hidden]down- LogicalLayer
+LogicalLayer -[hidden]down- IndexLayer
+IndexLayer -[hidden]down- StorageLayer
+StorageLayer -[hidden]down- LatchLayer
+LatchLayer -[hidden]down- ResourceLayer
+
+' --- KEY DESIGN INSIGHT NOTES ---
+note top of UndoLayer
+    ✓ Independent: Zero coupling to WAL
+    ✓ In-memory rollback without parsing
+    ✓ Works with any isolation or logging strategy
+end note
+
+note top of WriteAheadLayer
+    ✓ Bridges transaction logic and storage
+    ✓ Coordinates WAL (optional), operations, undo
+    ✓ Captures before-images for crash recovery
+    ✓ Records operations to UndoLog for abort
+end note
+
+note top of StorageLayer
+    ✓ PURE: No WAL, transaction, or isolation awareness
+    ✓ Thread-safe via page latching only
+    ✓ Pluggable: Swap storage engines freely
+    Note: Current BPlusTree calls logManager directly
+          This MUST be removed!
+end note
+
+note right of DefaultWrite
+    EXECUTION FLOW:
+    1. Capture before-image from buffer
+    2. (Optional) Log BEFORE to WAL
+    3. Call storage.Put(key, value)
+    4. Create PageWriteOp with before-image
+    5. txn.RecordOperation(op) → UndoLog
+    6. (Optional) Log AFTER to WAL
+end note
+
+note bottom of 2PL
+    On Write: calls writeHandler.HandleWrite()
+    On Abort: calls txn.Rollback(bufferMgr)
+    ✓ No direct storage engine coupling
+    ✓ No direct WAL coupling
+end note
+
+@enduml

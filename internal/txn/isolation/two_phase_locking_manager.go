@@ -1,26 +1,32 @@
 package transaction_manager
 
-import "github.com/rodrigo0345/omag/logmanager"
+import (
+	"github.com/rodrigo0345/omag/buffermanager"
+	"github.com/rodrigo0345/omag/logmanager"
+	storageengine "github.com/rodrigo0345/omag/storage_engine"
+)
 
 type TransactionID uint64
 
 type TwoPhaseLockingManager struct {
-	transactions map[TransactionID]*Transaction
-	logManager logmanager.ILogManager
-	// TODO: missing indexes parameters
+	transactions  map[TransactionID]*Transaction
+	logManager    logmanager.ILogManager
+	bufferManager buffermanager.IBufferPoolManager
+	primaryIndex  storageengine.IStorageEngine // TODO: missing secondary indexes
 }
 
-func NewTwoPhaseLockingManager(logManager logmanager.ILogManager) *TwoPhaseLockingManager {
+func NewTwoPhaseLockingManager(logManager logmanager.ILogManager, primaryIndex storageengine.IStorageEngine) *TwoPhaseLockingManager {
 	return &TwoPhaseLockingManager{
 		transactions: make(map[TransactionID]*Transaction),
-		logManager: logManager,
+		logManager:   logManager,
+		primaryIndex: primaryIndex,
 	}
 }
 
 func (m *TwoPhaseLockingManager) BeginTransaction(isolationLevel uint8) int64 {
 	// uuid7 generate key
 	txn := &Transaction{
-		txnID:             0, // This should be replaced with a proper ID generation mechanism
+		txnID:          0, // This should be replaced with a proper ID generation mechanism
 		isolationLevel: isolationLevel,
 	}
 	m.transactions[TransactionID(txn.txnID)] = txn
@@ -28,11 +34,11 @@ func (m *TwoPhaseLockingManager) BeginTransaction(isolationLevel uint8) int64 {
 }
 
 func (m *TwoPhaseLockingManager) Read(txnID int64, Key []byte) ([]byte, error) {
-	return nil, nil
+	return m.primaryIndex.Get(Key)
 }
 
 func (m *TwoPhaseLockingManager) Write(txnID int64, Key []byte, Value []byte) error {
-	return nil
+	return m.primaryIndex.Put(Key, Value)
 }
 
 func (m *TwoPhaseLockingManager) Commit(txnID int64) error {
@@ -54,20 +60,17 @@ func (m *TwoPhaseLockingManager) Commit(txnID int64) error {
 	}
 
 	// Flush all dirty pages from buffer pool to disk
-	if tm.bufferPool != nil {
-		if bpm, ok := tm.bufferPool.(interface{ FlushAll() error }); ok {
+	if m.bufferManager != nil {
+		if bpm, ok := m.bufferManager.(interface{ FlushAll() error }); ok {
 			bpm.FlushAll()
 		}
 	}
-
-	// Sync disk manager
-	// (This is done via flush above)
-
 	return nil
 }
 
 func (m *TwoPhaseLockingManager) Abort(txnID int64) error {
-	return nil
+	txn := m.transactions[TransactionID(txnID)]
+	txn.state = ABORTED
 }
 
 func (m *TwoPhaseLockingManager) Close() error {
