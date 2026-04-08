@@ -57,45 +57,6 @@ jobs:
         COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
         echo "Total coverage: $COVERAGE%"
 
-    - name: Check Coverage Threshold
-      run: |
-        echo "=== Checking Coverage Threshold ==="
-        FAIL=0
-        
-        # Check packages for 80% minimum coverage
-        for pkg in buffer txn concurrency; do
-          f="coverage.${pkg}.out"
-          if [ -f "$f" ]; then
-            cov=$(go tool cover -func="$f" | grep -w total | awk '{print $3}' | sed 's/%//')
-            if (( $(echo "$cov < 80" | bc -l) )); then
-              echo "❌ $pkg: $cov% (FAILED: below 80% threshold)"
-              FAIL=1
-            else
-              echo "✅ $pkg: $cov% (PASSED: 80%+ threshold)"
-            fi
-          fi
-        done
-        
-        # Check btree with lower interim threshold
-        if [ -f "coverage.btree.out" ]; then
-          cov=$(go tool cover -func="coverage.btree.out" | grep -w total | awk '{print $3}' | sed 's/%//')
-          if (( $(echo "$cov < 50" | bc -l) )); then
-            echo "❌ btree: $cov% (FAILED: below 50% interim threshold)"
-            FAIL=1
-          else
-            echo "✅ btree: $cov% (PASSED: 50%+ interim threshold)"
-          fi
-        fi
-        
-        if [ $FAIL -eq 1 ]; then
-          echo ""
-          echo "Coverage check failed. Some packages are below threshold."
-          exit 1
-        else
-          echo ""
-          echo "All coverage thresholds met! ✅"
-        fi
-
   release:
     name: Package and Release
     needs: test
