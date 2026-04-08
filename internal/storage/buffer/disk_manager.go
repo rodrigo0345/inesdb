@@ -77,14 +77,18 @@ func (dm *DiskManager) runBatchWorker() {
 			return
 		}
 
-		// Optimization: You could sort the buffer by PageID here
+		// TODO: sort the buffer by PageID here
 		// to make the disk I/O more sequential (LBA ordering)
 		var doneChans []chan struct{}
 		for _, req := range buffer {
 			// Skip writing for marker requests (used by Flush)
 			if !req.isMarker {
 				offset := int64(req.pageID) * int64(page.PageSize)
-				dm.dbFile.WriteAt(req.pageData, offset)
+				_, err := dm.dbFile.WriteAt(req.pageData, offset)
+				if err != nil {
+					// TODO: handle this condition
+					panic("error writing page:" + err.Error())
+				}
 			}
 			if req.done != nil {
 				doneChans = append(doneChans, req.done)
@@ -138,6 +142,10 @@ func (dm *DiskManager) WritePage(pageID page.ResourcePageID, pageData []byte) er
 		return ErrDiskManagerClosed
 	}
 
+	if dm.writeQueue == nil || dm.quit == nil {
+		return ErrDiskManagerClosed
+	}
+
 	// Validate page size
 	if len(pageData) != page.PageSize {
 		return errors.New("invalid page size")
@@ -188,7 +196,6 @@ func (dm *DiskManager) AllocatePage() page.ResourcePageID {
 
 func (dm *DiskManager) Close() error {
 	dm.mu.Lock()
-	// Prevent double-close
 	if dm.closed {
 		dm.mu.Unlock()
 		return nil
@@ -196,9 +203,9 @@ func (dm *DiskManager) Close() error {
 	dm.closed = true
 	dm.mu.Unlock()
 
-	// 1. Signal worker to stop
 	close(dm.quit)
-	// 2. Wait for pending writes to finish
+	close(dm.writeQueue)
+
 	dm.wg.Wait()
 
 	dm.mu.Lock()
@@ -234,6 +241,10 @@ func (dm *DiskManager) GetFileSize() (int64, error) {
 func (dm *DiskManager) Flush() error {
 	dm.mu.RLock()
 	if dm.dbFile == nil {
+		dm.mu.RUnlock()
+		return ErrDiskManagerClosed
+	}
+	if dm.writeQueue == nil || dm.quit == nil {
 		dm.mu.RUnlock()
 		return ErrDiskManagerClosed
 	}

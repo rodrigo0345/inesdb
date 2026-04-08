@@ -18,14 +18,14 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.26.1'
+        go-version: '1.25.1'
         cache: true
 
     - name: Install Dependencies
       run: go mod download
 
     - name: Run Tests with Coverage
-      run: go test -v -race -coverprofile=coverage.out ./buffermanager/... ./b_tree/... ./transaction_manager/...
+      run: go test -v -race -coverprofile=coverage.out ./internal/storage/buffer/... ./internal/storage/btree/... ./internal/txn/... ./internal/concurrency/...
 
     - name: Check Coverage Threshold
       run: |
@@ -66,7 +66,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.26.1'
+        go-version: '1.25.1'
 
     - name: Build Multi-Arch Binaries
       run: |
