@@ -94,3 +94,46 @@ func (t *Transaction) GetIsolationLevel() uint8 {
 func (t *Transaction) Commit() {
 	t.state = COMMITTED
 }
+
+// AddSharedLock adds a shared lock on the given key
+func (t *Transaction) AddSharedLock(key []byte) {
+	t.sharedLocks = append(t.sharedLocks, key)
+}
+
+// AddExclusiveLock adds an exclusive lock on the given key
+func (t *Transaction) AddExclusiveLock(key []byte) {
+	t.exclusiveLocks = append(t.exclusiveLocks, key)
+}
+
+// RemoveSharedLock removes a shared lock on the given key
+func (t *Transaction) RemoveSharedLock(key []byte) {
+	for i, k := range t.sharedLocks {
+		if bytesEqual(k, key) {
+			t.sharedLocks = append(t.sharedLocks[:i], t.sharedLocks[i+1:]...)
+			return
+		}
+	}
+}
+
+// RemoveExclusiveLock removes an exclusive lock on the given key
+func (t *Transaction) RemoveExclusiveLock(key []byte) {
+	for i, k := range t.exclusiveLocks {
+		if bytesEqual(k, key) {
+			t.exclusiveLocks = append(t.exclusiveLocks[:i], t.exclusiveLocks[i+1:]...)
+			return
+		}
+	}
+}
+
+// bytesEqual compares two byte slices for equality
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

@@ -18,8 +18,8 @@ func TestMetaPage_Initialization(t *testing.T) {
 	if meta.Version() != 1 {
 		t.Fatalf("expected Version 1, got %d", meta.Version())
 	}
-	if meta.RootPage() != 1 {
-		t.Fatalf("expected RootPage 1, got %d", meta.RootPage())
+	if meta.RootPage() != 0 {
+		t.Fatalf("expected RootPage 0, got %d", meta.RootPage())
 	}
 }
 

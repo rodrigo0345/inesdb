@@ -35,7 +35,7 @@ func NewWALRecord(lsn, prevLSN, txnID uint64, recordType RecordType, pageID page
 }
 
 func (rec WALRecord) String() string {
-	return fmt.Sprintf("WALRecord{LSN: %d, PrevLSN: %d, TxnID: %d, Type: %s, PageID: %d, Offset: %d, PageLSN: %d, Before: %v, After: %v}",
+	return fmt.Sprintf("WALRecord{LSN: %d, PrevLSN: %d, TxnID: %d, Type: %v, PageID: %d, Offset: %d, PageLSN: %d, Before: %v, After: %v}",
 		rec.LSN, rec.PrevLSN, rec.TxnID, rec.Type, rec.PageID, rec.Offset, rec.PageLSN, rec.Before, rec.After)
 }
 

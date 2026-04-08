@@ -54,11 +54,6 @@ func NewDiskManager(dbPath string) (*DiskManager, error) {
 		quit:       make(chan struct{}),
 	}
 
-	// If it's a new file, start at page 1 (page 0 is reserved for metadata)
-	if stat.Size() == 0 {
-		dm.nextPage = 1
-	}
-
 	dm.wg.Add(1)
 	go dm.runBatchWorker()
 

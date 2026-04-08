@@ -105,52 +105,71 @@ func (wm *WALManager) AppendLogRecord(rec ILogRecord) (LSN, error) {
 
 	switch v := rec.(type) {
 	case *WALRecord:
-		// Assign the next LSN
-		wm.lsn++
-		v.SetLSN(wm.lsn)
-
-		// Set PrevLSN to the last LSN of this transaction (for backward-walking)
-		v.SetPrevLSN(wm.txnLastLSN[v.GetTxnID()])
-		wm.txnLastLSN[v.GetTxnID()] = v.GetLSN()
-
-		// Update transaction and page tracking
-		switch v.GetType() {
-		case COMMIT:
-			// Transaction committed, remove from active set
-			delete(wm.activeTxns, v.GetTxnID())
-
-		case ABORT:
-			// Transaction aborted, remove from active set
-			delete(wm.activeTxns, v.GetTxnID())
-
-		case UPDATE:
-			// Mark transaction as active
-			wm.activeTxns[v.GetTxnID()] = true
-
-			// Set PageLSN on the record (for idempotency checking during redo)
-			v.SetPageLSN(wm.pageVersions[v.GetPageID()])
-			wm.pageVersions[v.GetPageID()] = v.GetLSN()
-
-			// Track dirty page: record the LSN of the first modification after checkpoint
-			if _, exists := wm.lastCheckpointDPT[v.GetPageID()]; !exists {
-				wm.lastCheckpointDPT[v.GetPageID()] = v.GetLSN()
-			}
-
-		case CHECKPOINT:
-			// Checkpoint records don't need special tracking here
-		}
-
-		// Serialize and write the record
-		buf := wm.serializeWALRecord(*v)
-		if _, err := wm.logFile.Write(buf); err != nil {
-			return 0, fmt.Errorf("failed to write WAL record: %w", err)
-		}
-
-		return LSN(wm.lsn), nil
+		return wm.appendWALRecord(v)
+	case WALRecord:
+		return wm.appendWALRecord(&v)
 	default:
 		return 0, fmt.Errorf("unsupported log record type: %T", rec)
 	}
+}
 
+// appendWALRecord handles the actual appending of a WALRecord pointer
+func (wm *WALManager) appendWALRecord(v *WALRecord) (LSN, error) {
+	// Assign the next LSN
+	wm.lsn++
+	v.SetLSN(wm.lsn)
+
+	// Set PrevLSN to the last LSN of this transaction (for backward-walking)
+	v.SetPrevLSN(wm.txnLastLSN[v.GetTxnID()])
+	wm.txnLastLSN[v.GetTxnID()] = v.GetLSN()
+
+	// Update transaction and page tracking
+	switch v.GetType() {
+	case COMMIT:
+		// Transaction committed, remove from active set
+		delete(wm.activeTxns, v.GetTxnID())
+
+	case ABORT:
+		// Transaction aborted, remove from active set
+		delete(wm.activeTxns, v.GetTxnID())
+
+	case UPDATE:
+		// Mark transaction as active
+		wm.activeTxns[v.GetTxnID()] = true
+
+		// Set PageLSN on the record (for idempotency checking during redo)
+		v.SetPageLSN(wm.pageVersions[v.GetPageID()])
+		wm.pageVersions[v.GetPageID()] = v.GetLSN()
+
+		// Track dirty page: record the LSN of the first modification after checkpoint
+		if _, exists := wm.lastCheckpointDPT[v.GetPageID()]; !exists {
+			wm.lastCheckpointDPT[v.GetPageID()] = v.GetLSN()
+		}
+
+	case CHECKPOINT:
+		// Checkpoint records don't need special tracking here
+	}
+
+	// Serialize and write the record
+	buf := wm.serializeWALRecord(*v)
+	if _, err := wm.logFile.Write(buf); err != nil {
+		return 0, fmt.Errorf("failed to write WAL record: %w", err)
+	}
+
+	return LSN(wm.lsn), nil
+}
+
+// AppendLogRecord (DEPRECATED: use AppendLogRecord instead)
+// Kept for backward compatibility. Appends a WAL record and returns its LSN
+func (wm *WALManager) AppendLog(rec interface{}) (LSN, error) {
+	switch v := rec.(type) {
+	case *WALRecord:
+		return wm.appendWALRecord(v)
+	case WALRecord:
+		return wm.appendWALRecord(&v)
+	default:
+		return 0, fmt.Errorf("unsupported log record type: %T", rec)
+	}
 }
 
 // serializeWALRecord converts a WALRecord to its binary representation

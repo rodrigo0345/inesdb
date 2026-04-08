@@ -1,7 +1,6 @@
 package lock
 
 import (
-	"bytes"
 	"errors"
 	"sync"
 	"time"
@@ -12,6 +11,16 @@ var (
 	ErrTxnAborted   = errors.New("transaction aborted")
 	ErrLockConflict = errors.New("lock conflict")
 )
+
+// ITransaction is the interface that all transaction types must implement for lock management
+type ITransaction interface {
+	GetID() uint64
+	Abort()
+	AddSharedLock(key []byte)
+	AddExclusiveLock(key []byte)
+	RemoveSharedLock(key []byte)
+	RemoveExclusiveLock(key []byte)
+}
 
 type LockMode int
 
@@ -69,8 +78,8 @@ func (lm *LockManager) SetDeadlockTimeout(timeout time.Duration) {
 }
 
 // LockShared acquires a shared lock on the key.
-func (lm *LockManager) LockShared(txn *Transaction, key []byte) error {
-	if txn.state == ABORTED {
+func (lm *LockManager) LockShared(txn ITransaction, key []byte) error {
+	if txn == nil {
 		return ErrTxnAborted
 	}
 
@@ -121,7 +130,7 @@ func (lm *LockManager) LockShared(txn *Transaction, key []byte) error {
 
 	if canGrant {
 		req.state = GRANTED
-		txn.sharedLocks = append(txn.sharedLocks, key) // this is tracked to make unlocking easier
+		txn.AddSharedLock(key) // this is tracked to make unlocking easier
 	}
 
 	queue.requests = append(queue.requests, req)
@@ -145,13 +154,8 @@ func (lm *LockManager) LockShared(txn *Transaction, key []byte) error {
 	for {
 		select {
 		case <-req.ch: // notifyNext() is responsible for calling this branch
-			if txn.state == ABORTED {
-				return ErrTxnAborted
-			}
 			// Granted, add to txn
-			txn.sharedLocks = append(txn.sharedLocks, key)
-			return nil
-
+			txn.AddSharedLock(key)
 		case <-time.After(lm.deadlockWait):
 			// Timeout triggered - check if there's a real cycle
 			if lm.waitForGraph.HasCycle(txn.GetID()) {
@@ -175,11 +179,7 @@ func (lm *LockManager) LockShared(txn *Transaction, key []byte) error {
 }
 
 // LockExclusive acquires an exclusive lock on the key.
-func (lm *LockManager) LockExclusive(txn *Transaction, key []byte) error {
-	if txn.state == ABORTED {
-		return ErrTxnAborted
-	}
-
+func (lm *LockManager) LockExclusive(txn ITransaction, key []byte) error {
 	keyStr := string(key)
 
 	lm.mu.Lock()
@@ -228,7 +228,7 @@ func (lm *LockManager) LockExclusive(txn *Transaction, key []byte) error {
 
 	if canGrant {
 		req.state = GRANTED
-		txn.exclusiveLocks = append(txn.exclusiveLocks, key)
+		txn.AddExclusiveLock(key)
 		// if upgrade, replace the shared request
 		if isUpgrade {
 			queue.requests[0] = req
@@ -260,11 +260,7 @@ func (lm *LockManager) LockExclusive(txn *Transaction, key []byte) error {
 	for {
 		select {
 		case <-req.ch: // notifyNext() is responsible for calling this branch
-			if txn.state == ABORTED {
-				return ErrTxnAborted
-			}
-			txn.exclusiveLocks = append(txn.exclusiveLocks, key)
-			return nil
+			txn.AddExclusiveLock(key)
 
 		case <-time.After(lm.deadlockWait):
 			// Timeout triggered - check if there's a real cycle
@@ -289,7 +285,7 @@ func (lm *LockManager) LockExclusive(txn *Transaction, key []byte) error {
 }
 
 // Unlock releases the lock held by the transaction on the key.
-func (lm *LockManager) Unlock(txn *Transaction, key []byte) error {
+func (lm *LockManager) Unlock(txn ITransaction, key []byte) error {
 	keyStr := string(key)
 
 	lm.mu.Lock()
@@ -303,20 +299,9 @@ func (lm *LockManager) Unlock(txn *Transaction, key []byte) error {
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
 
-	// Handle removing from txn local tracking (removed simply to save space, but in a real DB loop to remove)
-	removeBytesSlice := func(slice [][]byte, k []byte) [][]byte {
-		for i, v := range slice {
-			if bytes.Equal(v, k) {
-				return append(slice[:i], slice[i+1:]...)
-			}
-		}
-		return slice
-	}
+	txn.RemoveSharedLock(key)
+	txn.RemoveExclusiveLock(key)
 
-	txn.sharedLocks = removeBytesSlice(txn.sharedLocks, key)
-	txn.exclusiveLocks = removeBytesSlice(txn.exclusiveLocks, key)
-
-	// Remove from queue
 	foundIndex := -1
 	for i, r := range queue.requests {
 		if r.txnID == txn.GetID() && r.state == GRANTED {
@@ -329,12 +314,9 @@ func (lm *LockManager) Unlock(txn *Transaction, key []byte) error {
 		queue.requests = append(queue.requests[:foundIndex], queue.requests[foundIndex+1:]...)
 	}
 
-	// Clean up wait-for graph edges where this transaction is the holder
-	// This allows other waiting transactions to proceed and prevents stale wait edges
-	// NOTE: Call NotifyNext BEFORE cleaning up graph edges so waiting txns get notified
+	// Calls NotifyNext BEFORE cleaning up graph edges so waiting txns get notified
 	lm.notifyNext(queue)
 
-	// Now clean up the graph edges after notification
 	lm.waitForGraph.mu.Lock()
 	for waiter := range lm.waitForGraph.waitEdges {
 		if edges, exists := lm.waitForGraph.waitEdges[waiter]; exists {

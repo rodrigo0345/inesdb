@@ -47,6 +47,8 @@ nav:
       - Concurrency API: api/concurrency.md
   - Packages:
       - Overview: packages/overview.md
+  - Documentation:
+      - Versioning: versioning.md
   - Contributing:
       - Contributing: contributing.md
 
@@ -67,10 +69,9 @@ plugins:
   - search
   - minify:
       minify_html: true
+  - mike
 
 extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/rodrigo0345/omag
-  version:
-    provider: mike

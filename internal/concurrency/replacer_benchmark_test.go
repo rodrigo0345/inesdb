@@ -17,7 +17,7 @@ func BenchmarkLRU_Unpin(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		concurrency.Unpin(frameID)
+		replacer.Unpin(frameID)
 		frameID = (frameID + 1) % 10000
 	}
 }
@@ -29,7 +29,7 @@ func BenchmarkClock_Unpin(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		concurrency.Unpin(frameID)
+		replacer.Unpin(frameID)
 		frameID = (frameID + 1) % 10000
 	}
 }
@@ -39,13 +39,13 @@ func BenchmarkLRU_Pin(b *testing.B) {
 	replacer := NewLRUReplacer(10000)
 	// Pre-load frames
 	for i := 0; i < 10000; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	b.ResetTimer()
 	frameID := FrameID(0)
 	for i := 0; i < b.N; i++ {
-		concurrency.Pin(frameID)
+		replacer.Pin(frameID)
 		frameID = (frameID + 1) % 10000
 	}
 }
@@ -55,13 +55,13 @@ func BenchmarkClock_Pin(b *testing.B) {
 	replacer := NewClockReplacer(10000)
 	// Pre-load frames
 	for i := 0; i < 10000; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	b.ResetTimer()
 	frameID := FrameID(0)
 	for i := 0; i < b.N; i++ {
-		concurrency.Pin(frameID)
+		replacer.Pin(frameID)
 		frameID = (frameID + 1) % 10000
 	}
 }
@@ -71,16 +71,16 @@ func BenchmarkLRU_Victim(b *testing.B) {
 	replacer := NewLRUReplacer(10000)
 	// Pre-load frames
 	for i := 0; i < 10000; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		frameid, ok := concurrency.Victim()
+		frameid, ok := replacer.Victim()
 		if !ok {
 			// Reload when empty
 			for j := 0; j < 10000; j++ {
-				concurrency.Unpin(FrameID(j))
+				replacer.Unpin(FrameID(j))
 			}
 		} else {
 			_ = frameid
@@ -93,16 +93,16 @@ func BenchmarkClock_Victim(b *testing.B) {
 	replacer := NewClockReplacer(10000)
 	// Pre-load frames
 	for i := 0; i < 10000; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		frameid, ok := concurrency.Victim()
+		frameid, ok := replacer.Victim()
 		if !ok {
 			// Reload when empty
 			for j := 0; j < 10000; j++ {
-				concurrency.Unpin(FrameID(j))
+				replacer.Unpin(FrameID(j))
 			}
 		} else {
 			_ = frameid
@@ -114,12 +114,12 @@ func BenchmarkClock_Victim(b *testing.B) {
 func BenchmarkLRU_Size(b *testing.B) {
 	replacer := NewLRUReplacer(10000)
 	for i := 0; i < 1000; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = concurrency.Size()
+		_ = replacer.Size()
 	}
 }
 
@@ -127,12 +127,12 @@ func BenchmarkLRU_Size(b *testing.B) {
 func BenchmarkClock_Size(b *testing.B) {
 	replacer := NewClockReplacer(10000)
 	for i := 0; i < 1000; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = concurrency.Size()
+		_ = replacer.Size()
 	}
 }
 
@@ -147,14 +147,14 @@ func BenchmarkLRU_SequentialAccess(b *testing.B) {
 
 	// Pre-load all frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		frameID := FrameID(i % poolSize)
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -165,14 +165,14 @@ func BenchmarkClock_SequentialAccess(b *testing.B) {
 
 	// Pre-load all frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		frameID := FrameID(i % poolSize)
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -187,15 +187,15 @@ func BenchmarkLRU_RandomAccess(b *testing.B) {
 
 	// Pre-load all frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		frameID := FrameID(rng.Intn(poolSize))
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -206,15 +206,15 @@ func BenchmarkClock_RandomAccess(b *testing.B) {
 
 	// Pre-load all frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		frameID := FrameID(rng.Intn(poolSize))
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -230,7 +230,7 @@ func BenchmarkLRU_WorkingSet(b *testing.B) {
 
 	// Pre-load all frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
@@ -243,8 +243,8 @@ func BenchmarkLRU_WorkingSet(b *testing.B) {
 		} else {
 			frameID = FrameID(rng.Intn(poolSize))
 		}
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -256,7 +256,7 @@ func BenchmarkClock_WorkingSet(b *testing.B) {
 
 	// Pre-load all frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
@@ -269,8 +269,8 @@ func BenchmarkClock_WorkingSet(b *testing.B) {
 		} else {
 			frameID = FrameID(rng.Intn(poolSize))
 		}
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -285,23 +285,23 @@ func BenchmarkLRU_HighEvictionRate(b *testing.B) {
 
 	// Pre-load frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	b.ResetTimer()
 	nextFrame := FrameID(poolSize)
 	for i := 0; i < b.N; i++ {
 		// Evict a frame
-		_, ok := concurrency.Victim()
+		_, ok := replacer.Victim()
 		if !ok {
 			// Reload if needed
 			for j := 0; j < poolSize; j++ {
-				concurrency.Unpin(FrameID(j))
+				replacer.Unpin(FrameID(j))
 			}
 			nextFrame = FrameID(poolSize)
 		} else {
 			// Add new frame
-			concurrency.Unpin(nextFrame)
+			replacer.Unpin(nextFrame)
 			nextFrame++
 		}
 	}
@@ -314,23 +314,23 @@ func BenchmarkClock_HighEvictionRate(b *testing.B) {
 
 	// Pre-load frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	b.ResetTimer()
 	nextFrame := FrameID(poolSize)
 	for i := 0; i < b.N; i++ {
 		// Evict a frame
-		_, ok := concurrency.Victim()
+		_, ok := replacer.Victim()
 		if !ok {
 			// Reload if needed
 			for j := 0; j < poolSize; j++ {
-				concurrency.Unpin(FrameID(j))
+				replacer.Unpin(FrameID(j))
 			}
 			nextFrame = FrameID(poolSize)
 		} else {
 			// Add new frame
-			concurrency.Unpin(nextFrame)
+			replacer.Unpin(nextFrame)
 			nextFrame++
 		}
 	}
@@ -346,15 +346,15 @@ func BenchmarkLRU_SmallPool(b *testing.B) {
 	replacer := NewLRUReplacer(poolSize)
 
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		frameID := FrameID(rng.Intn(poolSize))
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -364,15 +364,15 @@ func BenchmarkClock_SmallPool(b *testing.B) {
 	replacer := NewClockReplacer(poolSize)
 
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		frameID := FrameID(rng.Intn(poolSize))
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -382,15 +382,15 @@ func BenchmarkLRU_MediumPool(b *testing.B) {
 	replacer := NewLRUReplacer(poolSize)
 
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		frameID := FrameID(rng.Intn(poolSize))
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -400,15 +400,15 @@ func BenchmarkClock_MediumPool(b *testing.B) {
 	replacer := NewClockReplacer(poolSize)
 
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		frameID := FrameID(rng.Intn(poolSize))
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -418,15 +418,15 @@ func BenchmarkLRU_LargePool(b *testing.B) {
 	replacer := NewLRUReplacer(poolSize)
 
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		frameID := FrameID(rng.Intn(poolSize))
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -436,15 +436,15 @@ func BenchmarkClock_LargePool(b *testing.B) {
 	replacer := NewClockReplacer(poolSize)
 
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		frameID := FrameID(rng.Intn(poolSize))
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -459,7 +459,7 @@ func BenchmarkLRU_MixedWorkload(b *testing.B) {
 
 	// Pre-load frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
@@ -471,23 +471,23 @@ func BenchmarkLRU_MixedWorkload(b *testing.B) {
 		if op < 40 {
 			// 40% unpin operations (mark frame as available)
 			frameID := FrameID(rng.Intn(poolSize))
-			concurrency.Unpin(frameID)
+			replacer.Unpin(frameID)
 		} else if op < 70 {
 			// 30% pin operations (mark frame as in-use)
 			frameID := FrameID(rng.Intn(poolSize))
-			concurrency.Pin(frameID)
+			replacer.Pin(frameID)
 		} else if op < 95 {
 			// 25% victim selections
-			_, ok := concurrency.Victim()
+			_, ok := replacer.Victim()
 			if !ok {
 				// Reload if needed
 				for j := 0; j < poolSize; j++ {
-					concurrency.Unpin(FrameID(j))
+					replacer.Unpin(FrameID(j))
 				}
 			}
 		} else {
 			// 5% size queries
-			_ = concurrency.Size()
+			_ = replacer.Size()
 		}
 	}
 }
@@ -499,7 +499,7 @@ func BenchmarkClock_MixedWorkload(b *testing.B) {
 
 	// Pre-load frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
@@ -511,23 +511,23 @@ func BenchmarkClock_MixedWorkload(b *testing.B) {
 		if op < 40 {
 			// 40% unpin operations (mark frame as available)
 			frameID := FrameID(rng.Intn(poolSize))
-			concurrency.Unpin(frameID)
+			replacer.Unpin(frameID)
 		} else if op < 70 {
 			// 30% pin operations (mark frame as in-use)
 			frameID := FrameID(rng.Intn(poolSize))
-			concurrency.Pin(frameID)
+			replacer.Pin(frameID)
 		} else if op < 95 {
 			// 25% victim selections
-			_, ok := concurrency.Victim()
+			_, ok := replacer.Victim()
 			if !ok {
 				// Reload if needed
 				for j := 0; j < poolSize; j++ {
-					concurrency.Unpin(FrameID(j))
+					replacer.Unpin(FrameID(j))
 				}
 			}
 		} else {
 			// 5% size queries
-			_ = concurrency.Size()
+			_ = replacer.Size()
 		}
 	}
 }
@@ -543,7 +543,7 @@ func BenchmarkLRU_Concurrent(b *testing.B) {
 
 	// Pre-load frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	numGoroutines := 8
@@ -560,9 +560,9 @@ func BenchmarkLRU_Concurrent(b *testing.B) {
 			for i := 0; i < operationsPerGoroutine; i++ {
 				frameID := FrameID(rng.Intn(poolSize))
 				if rng.Float64() < 0.5 {
-					concurrency.Pin(frameID)
+					replacer.Pin(frameID)
 				} else {
-					concurrency.Unpin(frameID)
+					replacer.Unpin(frameID)
 				}
 			}
 		}(g)
@@ -577,7 +577,7 @@ func BenchmarkClock_Concurrent(b *testing.B) {
 
 	// Pre-load frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	numGoroutines := 8
@@ -594,9 +594,9 @@ func BenchmarkClock_Concurrent(b *testing.B) {
 			for i := 0; i < operationsPerGoroutine; i++ {
 				frameID := FrameID(rng.Intn(poolSize))
 				if rng.Float64() < 0.5 {
-					concurrency.Pin(frameID)
+					replacer.Pin(frameID)
 				} else {
-					concurrency.Unpin(frameID)
+					replacer.Unpin(frameID)
 				}
 			}
 		}(g)
@@ -614,10 +614,10 @@ func BenchmarkLRU_PinHeavy(b *testing.B) {
 	// Pre-load and pin half the frames
 	for i := 0; i < poolSize; i++ {
 		if i < pinnedFrames {
-			concurrency.Unpin(FrameID(i))
-			concurrency.Pin(FrameID(i))
+			replacer.Unpin(FrameID(i))
+			replacer.Pin(FrameID(i))
 		} else {
-			concurrency.Unpin(FrameID(i))
+			replacer.Unpin(FrameID(i))
 		}
 	}
 
@@ -627,9 +627,9 @@ func BenchmarkLRU_PinHeavy(b *testing.B) {
 		frameID := FrameID(rng.Intn(poolSize))
 		// Try to pin already pinned frames
 		if frameID < FrameID(pinnedFrames) {
-			concurrency.Pin(frameID)
+			replacer.Pin(frameID)
 		} else {
-			concurrency.Unpin(frameID)
+			replacer.Unpin(frameID)
 		}
 	}
 }
@@ -643,10 +643,10 @@ func BenchmarkClock_PinHeavy(b *testing.B) {
 	// Pre-load and pin half the frames
 	for i := 0; i < poolSize; i++ {
 		if i < pinnedFrames {
-			concurrency.Unpin(FrameID(i))
-			concurrency.Pin(FrameID(i))
+			replacer.Unpin(FrameID(i))
+			replacer.Pin(FrameID(i))
 		} else {
-			concurrency.Unpin(FrameID(i))
+			replacer.Unpin(FrameID(i))
 		}
 	}
 
@@ -656,9 +656,9 @@ func BenchmarkClock_PinHeavy(b *testing.B) {
 		frameID := FrameID(rng.Intn(poolSize))
 		// Try to pin already pinned frames
 		if frameID < FrameID(pinnedFrames) {
-			concurrency.Pin(frameID)
+			replacer.Pin(frameID)
 		} else {
-			concurrency.Unpin(frameID)
+			replacer.Unpin(frameID)
 		}
 	}
 }
@@ -674,7 +674,7 @@ func BenchmarkLRU_ZipfianAccess(b *testing.B) {
 
 	// Pre-load all frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
@@ -685,8 +685,8 @@ func BenchmarkLRU_ZipfianAccess(b *testing.B) {
 		u := rng.Float64()
 		frameID := FrameID(int(float64(poolSize) * (1.0 - u*u)))
 
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }
 
@@ -697,7 +697,7 @@ func BenchmarkClock_ZipfianAccess(b *testing.B) {
 
 	// Pre-load all frames
 	for i := 0; i < poolSize; i++ {
-		concurrency.Unpin(FrameID(i))
+		replacer.Unpin(FrameID(i))
 	}
 
 	rng := rand.New(rand.NewSource(42))
@@ -708,7 +708,7 @@ func BenchmarkClock_ZipfianAccess(b *testing.B) {
 		u := rng.Float64()
 		frameID := FrameID(int(float64(poolSize) * (1.0 - u*u)))
 
-		concurrency.Pin(frameID)
-		concurrency.Unpin(frameID)
+		replacer.Pin(frameID)
+		replacer.Unpin(frameID)
 	}
 }

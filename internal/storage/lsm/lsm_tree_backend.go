@@ -6,8 +6,8 @@ import (
 )
 
 type LSMTreeBackend struct {
-	logManager    logmanager.ILogManager
-	bufferManager buffermanager.IBufferPoolManager
+	logManager    log.ILogManager
+	bufferManager buffer.IBufferPoolManager
 }
 
 func (l *LSMTreeBackend) Get(key []byte) ([]byte, error) {

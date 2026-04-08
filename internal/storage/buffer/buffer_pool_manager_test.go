@@ -30,7 +30,8 @@ func TestNewBufferPoolManager(t *testing.T) {
 func TestNewPage_Standard(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
-	page, err := bpm.NewPage()
+	pageRef, err := bpm.NewPage()
+	page := *pageRef
 	if err != nil {
 		t.Fatalf("failed to create new page: %v", err)
 	}
@@ -58,8 +59,10 @@ func TestNewPage_BufferFull(t *testing.T) {
 	bpm := createTestBufferPool(t, 2) // Small buffer
 
 	// Allocate 2 pages
-	page1, _ := bpm.NewPage()
-	page2, _ := bpm.NewPage()
+	page1Ref, _ := bpm.NewPage()
+	page1 := *page1Ref
+	page2Ref, _ := bpm.NewPage()
+	page2 := *page2Ref
 
 	// Both pages are pinned, so no room to evict
 	page3, err := bpm.NewPage()
@@ -116,7 +119,8 @@ func TestFetchPage_BufferFull(t *testing.T) {
 	bpm := createTestBufferPool(t, 1) // Only 1 frame
 
 	// Allocate the single page
-	page1, _ := bpm.NewPage()
+	page1Ref, _ := bpm.NewPage()
+	page1 := *page1Ref
 	page1.SetDirty(true)
 
 	// Try to fetch another page when buffer is full and only page is pinned
@@ -133,7 +137,8 @@ func TestFetchPage_EvictsAndFlushes(t *testing.T) {
 	bpm := createTestBufferPool(t, 2)
 
 	// Create and write to page 1
-	page1, _ := bpm.NewPage()
+	page1Ref, _ := bpm.NewPage()
+	page1 := *page1Ref
 	page1.SetDirty(true)
 	id1 := page1.GetID()
 
@@ -141,7 +146,8 @@ func TestFetchPage_EvictsAndFlushes(t *testing.T) {
 	bpm.UnpinPage(id1, true)
 
 	// Create page 2 to fill up the buffer pool
-	page2, _ := bpm.NewPage()
+	page2Ref, _ := bpm.NewPage()
+	page2 := *page2Ref
 	id2 := page2.GetID()
 	bpm.UnpinPage(id2, true)
 
@@ -226,7 +232,8 @@ func TestUnpinPage_ZeroPinCount(t *testing.T) {
 func TestFlushPage_Success(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
-	page, _ := bpm.NewPage()
+	pageRef, _ := bpm.NewPage()
+	page := *pageRef
 	pageID := page.GetID()
 	page.SetDirty(true)
 	pageData := page.GetData()
@@ -259,15 +266,18 @@ func TestFlushAll_Success(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
 	// Create multiple pages with dirty flags
-	page1, _ := bpm.NewPage()
+	page1Ref, _ := bpm.NewPage()
+	page1 := *page1Ref
 	page1.SetDirty(true)
 	id1 := page1.GetID()
 
-	page2, _ := bpm.NewPage()
+	page2Ref, _ := bpm.NewPage()
+	page2 := *page2Ref
 	page2.SetDirty(true)
 	id2 := page2.GetID()
 
-	page3, _ := bpm.NewPage()
+	page3Ref, _ := bpm.NewPage()
+	page3 := *page3Ref
 	page3.SetDirty(true)
 	id3 := page3.GetID()
 
@@ -307,10 +317,12 @@ func TestClose_AllPagesFlushed(t *testing.T) {
 	dm := createTestDiskManager(t)
 	bpm := NewBufferPoolManager(10, dm)
 
-	page1, _ := bpm.NewPage()
+	page1Ref, _ := bpm.NewPage()
+	page1 := *page1Ref
 	page1.SetDirty(true)
 
-	page2, _ := bpm.NewPage()
+	page2Ref, _ := bpm.NewPage()
+	page2 := *page2Ref
 	page2.SetDirty(true)
 
 	// Verify pages are dirty before close
@@ -333,17 +345,20 @@ func TestPageReuse(t *testing.T) {
 	bpm := createTestBufferPool(t, 2)
 
 	// Allocate page 1
-	page1, _ := bpm.NewPage()
+	page1Ref, _ := bpm.NewPage()
+	page1 := *page1Ref
 	id1 := page1.GetID()
 	bpm.UnpinPage(id1, false)
 
 	// Allocate page 2 (uses second frame)
-	page2, _ := bpm.NewPage()
+	page2Ref, _ := bpm.NewPage()
+	page2 := *page2Ref
 	id2 := page2.GetID()
 	bpm.UnpinPage(id2, false)
 
 	// Allocate page 3, should evict page 1
-	page3, _ := bpm.NewPage()
+	page3Ref, _ := bpm.NewPage()
+	page3 := *page3Ref
 	id3 := page3.GetID()
 
 	// Verify page 1 was evicted

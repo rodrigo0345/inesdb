@@ -9,6 +9,7 @@ on:
       - 'docs/**'
       - '.github/workflows/docs.yml'
       - 'go.mod'
+  workflow_dispatch:
 
 jobs:
   build-docs:
@@ -26,6 +27,8 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -40,7 +43,7 @@ jobs:
 
     - name: Install Documentation Dependencies
       run: |
-        pip install mkdocs mkdocs-material pymdown-extensions
+        pip install -r docs/requirements-docs.txt
 
     - name: Generate Go Documentation
       run: |
@@ -143,9 +146,27 @@ jobs:
 
         EOF
 
+    - name: Get Version Number
+      id: version
+      run: |
+        VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "dev")
+        # Remove 'v' prefix if present
+        VERSION=${VERSION#v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "VERSION=$VERSION"
+
     - name: Build MkDocs Site
       working-directory: ./docs
       run: mkdocs build --site-dir ../site
+
+    - name: Deploy with Mike
+      run: |
+        cd docs
+        # Deploy current version
+        mike deploy --push --title "Documentation" ${{ steps.version.outputs.version }}
+        
+        # Set latest as default
+        mike set-default --push latest || true
 
     - name: Setup Pages
       uses: actions/configure-pages@v4
