@@ -86,9 +86,7 @@ func (b *BPlusTreeBackend) initializeRoot() error {
 	// pageRef is *page.IResourcePage - use it directly
 	rootPage := *pageRef
 
-	// Initialize it as a leaf page
 	leaf := NewLeafPage(uint32(len(rootPage.GetData())))
-	// Copy the initialized leaf page data into the buffer
 	copy(rootPage.GetData(), leaf.data)
 
 	rootPage.SetDirty(true)

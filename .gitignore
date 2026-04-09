@@ -8,3 +8,8 @@ coverage.*
 go.{sum,work}
 cli
 coverage*
+
+cmd/maelstrom/.bin
+cmd/maelstrom/store
+cmd/maelstrom/maelstrom
+cmd/maelstrom/node*
