@@ -18,9 +18,9 @@ The version selector appears in the header alongside the search functionality.
 You can also access specific versions directly:
 
 ```
-https://rodrigo0345.github.io/omag-db/                    # Latest (main branch)
-https://rodrigo0345.github.io/omag-db/0.1.0/              # Version 0.1.0
-https://rodrigo0345.github.io/omag-db/0.2.0/              # Version 0.2.0
+https://rodrigo0345.github.io/inesdb/                    # Latest (main branch)
+https://rodrigo0345.github.io/inesdb/0.1.0/              # Version 0.1.0
+https://rodrigo0345.github.io/inesdb/0.2.0/              # Version 0.2.0
 ```
 
 ## Release Documentation
@@ -53,7 +53,7 @@ git push origin v0.1.0
 The CI/CD pipeline automatically:
 
 1. Builds documentation for that version
-2. Publishes it under `/omag-db/0.1.0/` path
+2. Publishes it under `/inesdb/0.1.0/` path
 3. Updates the version selector
 4. Keeps older versions accessible
 
@@ -85,7 +85,7 @@ Look for "Upgrade Guide" or "Migration Guide" in:
 - May be unstable or subject to change
 - Used for cutting-edge integration
 
-URL: `https://rodrigo0345.github.io/omag-db/latest/`
+URL: `https://rodrigo0345.github.io/inesdb/latest/`
 
 ### Stable Releases
 
@@ -94,7 +94,7 @@ URL: `https://rodrigo0345.github.io/omag-db/latest/`
 - Recommended for production use
 - API stability guarantees (within major version)
 
-URL: `https://rodrigo0345.github.io/omag-db/v0.1.0/`
+URL: `https://rodrigo0345.github.io/inesdb/v0.1.0/`
 
 ## Using Versioned APIs
 
@@ -108,7 +108,7 @@ git checkout v0.1.0
 import "github.com/rodrigo0345/omag/internal/storage/btree"
 
 # Refer to documentation for that version
-# https://rodrigo0345.github.io/omag-db/0.1.0/
+# https://rodrigo0345.github.io/inesdb/0.1.0/
 ```
 
 ## Documentation Quality Assurance

@@ -169,7 +169,7 @@ go doc ./internal/storage/buffer > docs/api/buffer-pool-generated.md
 
 When pushed to `main`, docs are available at:
 ```
-https://rodrigo0345.github.io/omag-db/
+https://rodrigo0345.github.io/inesdb/
 ```
 
 ## Troubleshooting

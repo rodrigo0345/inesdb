@@ -1,6 +1,6 @@
 # InesDB - Indexed Node Engine Storage
 
-![InesDB Logo](docs/logo.png)
+<img src="docs/logo.png" alt="InesDB Logo" width="200" />
 
 ## Overview
 
