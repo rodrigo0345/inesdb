@@ -1,0 +1,33 @@
+name: Maelstrom Stress Test
+
+on:
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  stress-test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25.1'
+
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y graphviz gnuplot
+
+    - name: Run Maelstrom Stress Test
+      run: |
+        cd cmd/maelstrom
+        make test-stress
