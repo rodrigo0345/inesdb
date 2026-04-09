@@ -1,0 +1,181 @@
+name: Generate and Deploy Documentation
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+  
+
+jobs:
+  build-docs:
+    name: Build and Deploy Documentation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.26.1'
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: 'docs/requirements-docs.txt'
+
+    - name: Install Documentation Dependencies
+      run: |
+        pip install -r docs/requirements-docs.txt
+
+    - name: Generate Go Documentation
+      run: |
+        mkdir -p docs/api
+        go doc ./internal/storage/btree > docs/api/btree.md || true
+        go doc ./internal/storage/buffer > docs/api/buffer-pool.md || true
+        go doc ./internal/storage/lsm > docs/api/lsm-tree.md || true
+        go doc ./internal/txn > docs/api/transactions.md || true
+        go doc ./internal/concurrency > docs/api/concurrency.md || true
+
+    - name: Generate Go Packages Overview
+      run: |
+        mkdir -p docs/packages
+        cat > docs/packages/overview.md << 'EOF'
+        # Storage Engine Packages
+
+        ## Package Structure
+
+        \`\`\`
+        internal/
+        ├── storage/         - Core storage engine implementations
+        │   ├── btree/       - B+ Tree backend implementation
+        │   ├── buffer/      - Buffer pool and disk management
+        │   └── lsm/         - Log-Structured Merge Tree backend
+        ├── txn/             - Transaction and ACID support
+        │   ├── isolation/   - Isolation level managers (MVCC, OCC, 2PL)
+        │   ├── lock/        - Lock manager and deadlock detection
+        │   ├── log/         - Write-Ahead Logging (WAL)
+        │   └── undo/        - Undo/rollback operations
+        └── concurrency/     - Concurrency control and cache replacement
+        \`\`\`
+
+        EOF
+
+    - name: Generate Features Documentation
+      run: |
+        mkdir -p docs/features
+        cat > docs/features/index.md << 'EOF'
+        # Storage Engine Features
+
+        ## Access Methods
+
+        ### B+ Tree Implementation
+        - Multi-level tree structure for efficient range queries
+        - Support for internal and leaf pages
+        - Automatic page merging for empty nodes
+        - Overflow page support for large records
+
+        ### LSM Tree Implementation
+        - Write-optimized LSM tree backend
+        - Level-based compaction strategy
+        - Efficient range queries
+
+        ### Buffer Pool Manager
+        - Configurable buffer pool with page caching
+        - Replacement policies (LRU, Clock)
+        - Disk manager with persistent storage
+
+        ## Page Layout
+
+        - **Size**: System-dependent
+        - **Byte Order**: Little Endian (LSB)
+        - **Format**: Slotted pages for variable-size records
+        - **Sorting**: Logical sorting support
+        - **Version Control**: Magic numbers for file format versioning
+        - **Right-Most Neighbor**: Stored in page header for linked access
+
+        ## Transaction Support
+
+        - **MVCC**: Multi-Version Concurrency Control
+        - **OCC**: Optimistic Concurrency Control
+        - **2PL**: Two-Phase Locking
+        - **WAL**: Write-Ahead Logging for durability
+        - **Rollback**: Comprehensive undo/rollback operations
+
+        ## Concurrency Control
+
+        - Clock replacement policy in buffer pool
+        - LRU replacement alternative
+        - Transaction isolation managers
+        - Deadlock detection via wait-for graphs
+
+        EOF
+
+    - name: Generate API Documentation
+      run: |
+        mkdir -p docs/api-reference
+        cat > docs/api-reference/index.md << 'EOF'
+        # API Reference
+
+        This section provides detailed API documentation for the storage engine components.
+
+        ## Core Components
+
+        - **B+ Tree**: Fully documented in [btree.md](../api/btree.md)
+        - **Buffer Pool**: Reference in [buffer-pool.md](../api/buffer-pool.md)
+        - **LSM Tree**: Details in [lsm-tree.md](../api/lsm-tree.md)
+        - **Transactions**: Transaction API in [transactions.md](../api/transactions.md)
+        - **Concurrency**: Concurrency control in [concurrency.md](../api/concurrency.md)
+
+        EOF
+
+    - name: Get Version Number
+      id: version
+      run: |
+        VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "dev")
+        # Remove 'v' prefix if present
+        VERSION=${VERSION#v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "VERSION=$VERSION"
+
+    - name: Build MkDocs Site
+      run: mkdocs build
+
+    - name: Configure Git
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+
+    - name: Deploy with Mike
+      run: |
+        # Deploy current version
+        mike deploy --push --title "Documentation" ${{ steps.version.outputs.version }}
+        
+        # Set latest as default
+        mike set-default --push latest || true
+
+    - name: Setup Pages
+      uses: actions/configure-pages@v4
+
+    - name: Upload Pages Artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: 'site'
+
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4

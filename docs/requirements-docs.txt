@@ -1,0 +1,4 @@
+mkdocs==1.5.3
+mkdocs-material==9.5.13
+pymdown-extensions==10.5
+mike==2.1.1

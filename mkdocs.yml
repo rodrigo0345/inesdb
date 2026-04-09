@@ -1,0 +1,56 @@
+site_name: InesDB - Indexed Node Engine Storage
+site_description: Comprehensive documentation for InesDB on-disk database storage engine
+repo_url: https://github.com/rodrigo0345/omag-db
+repo_name: inesdb
+edit_uri: edit/main/docs/
+docs_dir: 'docs'
+site_dir: 'site'
+
+theme:
+  name: readthedocs
+  logo: logo.png
+  favicon: images/favicon.png
+
+nav:
+  - Home: index.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - B+ Tree: architecture/bplus-tree.md
+      - LSM Tree: architecture/lsm-tree.md
+      - Buffer Pool: architecture/buffer-pool.md
+      - Transactions: architecture/transactions.md
+      - Concurrency: architecture/concurrency.md
+  - Features:
+      - Index: features/index.md
+  - API Reference:
+      - Index: api-reference/index.md
+      - B+ Tree API: api/btree.md
+      - Buffer Pool API: api/buffer-pool.md
+      - LSM Tree API: api/lsm-tree.md
+      - Transactions API: api/transactions.md
+      - Concurrency API: api/concurrency.md
+  - Packages:
+      - Overview: packages/overview.md
+  - Documentation:
+      - Versioning: versioning.md
+  - Contributing:
+      - Contributing: contributing.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - toc:
+      permalink: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+  - mike
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/rodrigo0345/omag-db

@@ -1,0 +1,98 @@
+name: Go CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Unit Tests and Coverage
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25.1'
+        cache: true
+
+    - name: Install Dependencies
+      run: go mod download
+
+    - name: Run Tests with Per-Package Coverage
+      run: |
+        set -e
+        echo "=== Running tests with coverage for all packages ==="
+        go test -v -race -coverprofile=coverage.buffer.out ./internal/storage/buffer/...
+        go test -v -race -coverprofile=coverage.btree.out ./internal/storage/btree/...
+        go test -v -race -coverprofile=coverage.txn.out ./internal/txn/...
+        go test -v -race -coverprofile=coverage.concurrency.out ./internal/concurrency/...
+        
+        # Merge coverage files
+        echo "mode: atomic" > coverage.out
+        for f in coverage.buffer.out coverage.btree.out coverage.txn.out coverage.concurrency.out; do
+          if [ -f "$f" ]; then
+            tail -n +2 "$f" >> coverage.out 2>/dev/null || true
+          fi
+        done
+
+    - name: Display Test Results
+      run: |
+        echo "All tests passed successfully!"
+
+  release:
+    name: Package and Release
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Generate Next Version Tag
+      id: tag_version
+      uses: anothrNick/github-tag-action@1.64.0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        WITH_V: true
+        DEFAULT_BUMP: patch # Increments 0.0.1 -> 0.0.2 automatically
+
+    - name: Create Release Branch
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        # Uses the output from the tag_version step
+        BRANCH_NAME="release/${{ steps.tag_version.outputs.new_tag }}"
+        git checkout -b $BRANCH_NAME
+        git push origin $BRANCH_NAME
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25.1'
+
+    - name: Build Multi-Arch Binaries
+      run: |
+        GOOS=linux GOARCH=amd64 go build -v -o release-linux-amd64 ./cmd/cli
+        GOOS=linux GOARCH=arm64 go build -v -o release-linux-arm64 ./cmd/cli
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.tag_version.outputs.new_tag }}
+        name: Release ${{ steps.tag_version.outputs.new_tag }}
+        target_commitish: release/${{ steps.tag_version.outputs.new_tag }}
+        files: |
+          release-linux-amd64
+          release-linux-arm64
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

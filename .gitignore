@@ -1,0 +1,10 @@
+omag
+
+*.db
+*.wal
+**/*debug*
+.backup/
+coverage.*
+go.{sum,work}
+cli
+coverage*
