@@ -1,6 +1,6 @@
 # Package Overview
 
-OMAG Storage Engine is organized into logical packages, each with clear responsibilities.
+InesDB Storage Engine is organized into logical packages, each with clear responsibilities.
 
 ## Directory Structure
 
@@ -8,7 +8,7 @@ OMAG Storage Engine is organized into logical packages, each with clear responsi
 internal/
 ├── storage/          - Core storage backend implementations
 │   ├── btree/       - B+ Tree backend
-│   ├── buffer/      - Buffer pool and disk management  
+│   ├── buffer/      - Buffer pool and disk management
 │   ├── lsm/         - Log-Structured Merge Tree backend
 │   └── page/        - Page abstraction and management
 │
@@ -224,7 +224,7 @@ Application
 // B+ Tree Backend
 import "github.com/rodrigo0345/omag/internal/storage/btree"
 
-// LSM Tree Backend  
+// LSM Tree Backend
 import "github.com/rodrigo0345/omag/internal/storage/lsm"
 
 // Buffer Pool Manager
@@ -254,7 +254,7 @@ pool := NewBufferPoolManager(
 )
 ```
 
-### Error Wrapping  
+### Error Wrapping
 Errors propagate with context:
 ```go
 if err != nil {

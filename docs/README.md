@@ -1,6 +1,6 @@
-# OMAG Documentation
+# InesDB Documentation
 
-This directory contains the complete documentation for the OMAG Storage Engine.
+This directory contains the complete documentation for the InesDB Storage Engine.
 
 ## Building Documentation Locally
 
@@ -169,7 +169,7 @@ go doc ./internal/storage/buffer > docs/api/buffer-pool-generated.md
 
 When pushed to `main`, docs are available at:
 ```
-https://rodrigo0345.github.io/omag/
+https://rodrigo0345.github.io/omag-db/
 ```
 
 ## Troubleshooting
@@ -202,8 +202,8 @@ See [Contributing Guide](contributing.md) for details on:
 
 ## License
 
-Documentation is part of the OMAG project. See main repository for license details.
+Documentation is part of the InesDB project. See main repository for license details.
 
 ---
 
-For questions or suggestions, open an issue on [GitHub](https://github.com/rodrigo0345/omag).
+For questions or suggestions, open an issue on [GitHub](https://github.com/rodrigo0345/omag-db).

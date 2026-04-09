@@ -1,7 +1,7 @@
-site_name: OMAG Storage Engine Documentation
-site_description: Comprehensive documentation for the OMAG on-disk database storage engine
-repo_url: https://github.com/rodrigo0345/omag
-repo_name: omag
+site_name: InesDB - Indexed Node Engine Storage
+site_description: Comprehensive documentation for InesDB on-disk database storage engine
+repo_url: https://github.com/rodrigo0345/omag-db
+repo_name: inesdb
 edit_uri: edit/main/docs/
 docs_dir: 'docs'
 site_dir: 'site'

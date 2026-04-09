@@ -2,7 +2,7 @@
 
 ## Overview
 
-OMAG provides comprehensive ACID transaction support with multiple isolation levels and concurrency control strategies. Transactions ensure data consistency and enable safe concurrent execution of queries.
+InesDB provides comprehensive ACID transaction support with multiple isolation levels and concurrency control strategies. Transactions ensure data consistency and enable safe concurrent execution of queries.
 
 ## ACID Guarantees
 

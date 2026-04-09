@@ -1,6 +1,6 @@
 # Features
 
-OMAG Storage Engine provides a comprehensive set of features for building high-performance database systems.
+InesDB Storage Engine provides a comprehensive set of features for building high-performance database systems.
 
 ## Access Methods
 
@@ -75,7 +75,7 @@ Ideal for: Write-heavy workloads, time-series data, log storage, high-throughput
 ### Isolation Levels
 
 1. **READ UNCOMMITTED**: Fastest, dirty reads possible
-2. **READ COMMITTED**: Typical default, non-repeatable reads possible  
+2. **READ COMMITTED**: Typical default, non-repeatable reads possible
 3. **REPEATABLE READ**: Snapshot isolation, phantom reads possible
 4. **SERIALIZABLE**: Strictest, equivalent to serial execution
 

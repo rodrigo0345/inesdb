@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for your interest in contributing to OMAG! This guide will help you get started.
+Thank you for your interest in contributing to InesDB! This guide will help you get started.
 
 ## Getting Started
 
@@ -14,8 +14,8 @@ Thank you for your interest in contributing to OMAG! This guide will help you ge
 
 ```bash
 # Clone the repository
-git clone https://github.com/rodrigo0345/omag.git
-cd omag
+git clone https://github.com/rodrigo0345/omag-db.git
+cd omag-db
 
 # Install dependencies
 go mod download
@@ -97,10 +97,10 @@ go test -bench=. ./internal/concurrency/
 func TestFeatureName(t *testing.T) {
     // Arrange: Setup test data
     buffer := NewBufferPool(1000)
-    
+
     // Act: Execute the feature
     page, err := buffer.GetPage(1)
-    
+
     // Assert: Verify results
     if err != nil {
         t.Fatalf("unexpected error: %v", err)
@@ -140,13 +140,13 @@ func (bpm *BufferPoolManager) GetPage(pageID PageID) (*Page, error) {
     if pageID == InvalidPageID {
         return nil, ErrInvalidPageID
     }
-    
+
     cached, ok := bpm.cache[pageID]
     if ok {
         cached.increaseRefCount()
         return cached, nil
     }
-    
+
     return bpm.loadFromDisk(pageID)
 }
 
@@ -301,7 +301,7 @@ Include:
 - [Go Official Documentation](https://golang.org/doc/)
 - [Effective Go](https://golang.org/doc/effective_go)
 - [Google Go Style Guide](https://google.github.io/styleguide/go/)
-- [Database Systems Papers](https://github.com/rodrigo0345/omag/tree/main/docs/papers)
+- [Database Systems Papers](https://github.com/rodrigo0345/omag-db/tree/main/docs/papers)
 
 ## Community
 
@@ -309,4 +309,4 @@ Include:
 - Join discussions for design decisions
 - Help review other PRs
 
-Thank you for contributing to OMAG! 🙏
+Thank you for contributing to InesDB! 🙏

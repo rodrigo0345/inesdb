@@ -1,6 +1,6 @@
 # API Reference
 
-This section contains detailed API documentation for OMAG Storage Engine components, extracted from source code and organized by module.
+This section contains detailed API documentation for InesDB Storage Engine components, extracted from source code and organized by module.
 
 ## Core Storage Backends
 
@@ -11,7 +11,7 @@ Detailed [B+ Tree API Reference](btree.md) covering:
 - Page management and balancing
 - Iterator interfaces for range queries
 
-### LSM Tree API  
+### LSM Tree API
 Detailed [LSM Tree API Reference](lsm-tree.md) covering:
 - Memtable operations
 - Compaction strategies
@@ -77,7 +77,7 @@ if err != nil {
 
 ## Interfaces
 
-Key interfaces for extending OMAG:
+Key interfaces for extending InesDB:
 
 ### Backend Interface
 ```go

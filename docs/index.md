@@ -1,12 +1,12 @@
-# OMAG Storage Engine
+# InesDB - Indexed Node Engine Storage
 
-![OMAG Logo](../docs/logo.png)
+![InesDB Logo](../docs/logo.png)
 
-Welcome to the OMAG Storage Engine documentation. OMAG is a sophisticated on-disk database engine written in Go with focus on **row-major, interchangeable algorithms** for storage backends, efficient memory management, and robust transaction support.
+Welcome to the InesDB documentation. InesDB is a sophisticated on-disk database engine written in Go with focus on **row-major, interchangeable algorithms** for storage backends, efficient memory management, and robust transaction support.
 
 ## Quick Overview
 
-OMAG is database engine featuring:
+InesDB is database engine featuring:
 
 - **Row-Based Storage**: Structured data organization with slotted pages
 - **Multiple Access Methods**: B+ Tree and LSM Tree backends

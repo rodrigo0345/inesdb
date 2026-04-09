@@ -1,6 +1,6 @@
 # Architecture Overview
 
-OMAG storage engine is built on a layered architecture that separates concerns and provides flexibility for different storage backends and transaction isolation strategies.
+InesDB storage engine is built on a layered architecture that separates concerns and provides flexibility for different storage backends and transaction isolation strategies.
 
 ## Architectural Layers
 
@@ -59,7 +59,7 @@ Handles persistent storage operations:
 
 ## Page Layout
 
-OMAG uses a sophisticated slotted page format:
+InesDB uses a sophisticated slotted page format:
 
 ```
 ┌─────────────────────────────────────┐

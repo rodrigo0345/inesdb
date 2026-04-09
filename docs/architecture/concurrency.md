@@ -2,7 +2,7 @@
 
 ## Overview
 
-OMAG's concurrency control layer ensures safe execution of multiple transactions simultaneously while maintaining data consistency and maximizing throughput.
+InesDB's concurrency control layer ensures safe execution of multiple transactions simultaneously while maintaining data consistency and maximizing throughput.
 
 ## Concurrency Challenges
 

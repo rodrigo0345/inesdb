@@ -1,6 +1,6 @@
 # Documentation Versioning
 
-OMAG documentation supports multiple versions, allowing you to view documentation for different releases of the storage engine.
+InesDB documentation supports multiple versions, allowing you to view documentation for different releases of the storage engine.
 
 ## Accessing Different Versions
 
@@ -18,9 +18,9 @@ The version selector appears in the header alongside the search functionality.
 You can also access specific versions directly:
 
 ```
-https://rodrigo0345.github.io/omag/                    # Latest (main branch)
-https://rodrigo0345.github.io/omag/0.1.0/              # Version 0.1.0
-https://rodrigo0345.github.io/omag/0.2.0/              # Version 0.2.0
+https://rodrigo0345.github.io/omag-db/                    # Latest (main branch)
+https://rodrigo0345.github.io/omag-db/0.1.0/              # Version 0.1.0
+https://rodrigo0345.github.io/omag-db/0.2.0/              # Version 0.2.0
 ```
 
 ## Release Documentation
@@ -53,7 +53,7 @@ git push origin v0.1.0
 The CI/CD pipeline automatically:
 
 1. Builds documentation for that version
-2. Publishes it under `/omag/0.1.0/` path
+2. Publishes it under `/omag-db/0.1.0/` path
 3. Updates the version selector
 4. Keeps older versions accessible
 
@@ -85,7 +85,7 @@ Look for "Upgrade Guide" or "Migration Guide" in:
 - May be unstable or subject to change
 - Used for cutting-edge integration
 
-URL: `https://rodrigo0345.github.io/omag/latest/`
+URL: `https://rodrigo0345.github.io/omag-db/latest/`
 
 ### Stable Releases
 
@@ -94,11 +94,11 @@ URL: `https://rodrigo0345.github.io/omag/latest/`
 - Recommended for production use
 - API stability guarantees (within major version)
 
-URL: `https://rodrigo0345.github.io/omag/v0.1.0/`
+URL: `https://rodrigo0345.github.io/omag-db/v0.1.0/`
 
 ## Using Versioned APIs
 
-When integrating OMAG, always reference the specific version's documentation:
+When integrating InesDB, always reference the specific version's documentation:
 
 ```bash
 # Clone specific version
@@ -108,7 +108,7 @@ git checkout v0.1.0
 import "github.com/rodrigo0345/omag/internal/storage/btree"
 
 # Refer to documentation for that version
-# https://rodrigo0345.github.io/omag/0.1.0/
+# https://rodrigo0345.github.io/omag-db/0.1.0/
 ```
 
 ## Documentation Quality Assurance
@@ -129,7 +129,7 @@ Development (main)
     ├─ v0.2.0 (release)
     ├─ v1.0.0 (major release)
     └─ ... (more versions)
-    
+
 Each version has its own documentation path
 All versions remain accessible
 ```
@@ -211,7 +211,7 @@ mkdocs serve -f docs/mkdocs.yml
 
 When code and documentation versions don't match:
 
-1. Identify your OMAG version: `git describe --tags`
+1. Identify your InesDB version: `git describe --tags`
 2. Visit documentation for that version
 3. Report issue if documentation is outdated
 
