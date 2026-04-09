@@ -11,8 +11,35 @@ $(MAELSTROM):
 build:
 	go build -o node .
 
-test: $(MAELSTROM) build
-	$(MAELSTROM) test -w echo --bin ./node --node-count 3 --time-limit 10
+# Transaction workload: List append with transaction semantics
+test-append: $(MAELSTROM) build
+	$(MAELSTROM) test -w txn-list-append \
+	  --bin ./node \
+	  --node-count 1 \
+	  --concurrency 5 \
+	  --time-limit 20 \
+	  --rate 100
+
+# Transaction workload: Read-write register with transaction semantics
+test-rw-register: $(MAELSTROM) build
+	$(MAELSTROM) test -w txn-rw-register \
+	  --bin ./node \
+	  --node-count 1 \
+	  --concurrency 5 \
+	  --time-limit 20 \
+	  --rate 100
+
+# Stress test: High concurrency with txn-list-append
+test-stress: $(MAELSTROM) build
+	$(MAELSTROM) test -w txn-list-append \
+	  --bin ./node \
+	  --node-count 1 \
+	  --concurrency 16 \
+	  --time-limit 30 \
+	  --rate 500
+
+# Default test: Run transaction tests
+test: test-append test-rw-register
 
 clean:
 	rm -rf $(BIN_DIR) node

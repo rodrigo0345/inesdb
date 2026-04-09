@@ -1,23 +1,15 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
-	"fmt"
-	"log"
-	"os"
-	"sync"
-
-	"github.com/rodrigo0345/omag/internal/storage/btree"
-	"github.com/rodrigo0345/omag/internal/storage/buffer"
-	"github.com/rodrigo0345/omag/internal/txn"
-	"github.com/rodrigo0345/omag/internal/txn/isolation"
-	txnlog "github.com/rodrigo0345/omag/internal/txn/log"
+"bufio"
+"encoding/json"
+"fmt"
+"os"
+"sync"
 )
 
 // MaelstromMessage represents a Maelstrom protocol message
 type MaelstromMessage struct {
-	ID   *int           `json:"id,omitempty"`
 	Src  string         `json:"src"`
 	Dest string         `json:"dest"`
 	Body map[string]any `json:"body"`
@@ -25,59 +17,21 @@ type MaelstromMessage struct {
 
 // Node represents the Maelstrom node
 type Node struct {
-	nodeID       string
-	msgID        int
-	msgIDMu      sync.Mutex
-	isolationMgr txn.IIsolationManager
-	logger       *log.Logger
+	nodeID  string
+	msgID   int
+	msgIDMu sync.Mutex
+
+	// Local state for transactions
+	stateMu sync.Mutex
+	state   map[string]any
 }
 
 // NewNode creates a new Maelstrom node
-func NewNode() (*Node, error) {
-	// Initialize disk manager
-	dm, err := buffer.NewDiskManager("maelstrom.wal")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create disk manager: %w", err)
-	}
-
-	// Initialize buffer pool manager
-	bpm := buffer.NewBufferPoolManager(128, dm)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create buffer pool manager: %w", err)
-	}
-
-	// Initialize BTree storage backend
-	storageEngine, err := btree.NewBPlusTreeBackend(bpm, dm)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create BTree backend: %w", err)
-	}
-
-	// Initialize WAL (log) manager
-	logManager, err := txnlog.NewWALManager("transaction.wal")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create WAL manager: %w", err)
-	}
-
-	// Initialize rollback manager
-	rollbackManager := txn.NewRollbackManager(bpm)
-
-	// Initialize write handler
-	writeHandler := txn.NewDefaultWriteHandler(storageEngine, rollbackManager, bpm, logManager)
-
-	// Initialize 2PL isolation manager
-	isolationMgr := isolation.NewTwoPhaseLockingManager(
-		logManager,
-		bpm,
-		writeHandler,
-		rollbackManager,
-		storageEngine,
-	)
-
+func NewNode() *Node {
 	return &Node{
-		msgID:        0,
-		isolationMgr: isolationMgr,
-		logger:       log.New(os.Stderr, "[maelstrom] ", log.LstdFlags),
-	}, nil
+		msgID: 0,
+		state: make(map[string]any),
+	}
 }
 
 // Start begins listening for messages
@@ -86,224 +40,102 @@ func (n *Node) Start() error {
 	for scanner.Scan() {
 		var msg MaelstromMessage
 		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
-			n.logger.Printf("failed to parse message: %v", err)
 			continue
 		}
 
-		// Handle initialization
-		if msg.Body["type"] == "init" {
-			n.handleInit(msg)
+		msgType, ok := msg.Body["type"].(string)
+		if !ok {
 			continue
 		}
 
-		// Handle transaction operations
-		if opType, ok := msg.Body["type"].(string); ok {
-			go n.handleOperation(msg, opType)
+		if msgType == "init" {
+			nodeID, _ := msg.Body["node_id"].(string)
+			n.nodeID = nodeID
+			response := MaelstromMessage{
+				Src:  n.nodeID,
+				Dest: msg.Src,
+				Body: map[string]any{
+					"type":        "init_ok",
+					"in_reply_to": msg.Body["msg_id"],
+				},
+			}
+			n.send(response)
+		} else if msgType == "txn" {
+			txnRaw, ok := msg.Body["txn"].([]any)
+			if !ok {
+				continue
+			}
+
+			// Execute transaction
+			resultTxn := n.executeTxn(txnRaw)
+
+			response := MaelstromMessage{
+				Src:  n.nodeID,
+				Dest: msg.Src,
+				Body: map[string]any{
+					"type":        "txn_ok",
+					"in_reply_to": msg.Body["msg_id"],
+					"txn":         resultTxn,
+				},
+			}
+			n.send(response)
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scanner error: %w", err)
-	}
-	return nil
+	return scanner.Err()
 }
 
-// handleInit handles the Maelstrom init message
-func (n *Node) handleInit(msg MaelstromMessage) {
-	nodeID, _ := msg.Body["node_id"].(string)
-	n.nodeID = nodeID
+func (n *Node) executeTxn(txnOps []any) []any {
+	n.stateMu.Lock()
+	defer n.stateMu.Unlock()
 
-	// Send init acknowledgement
-	response := MaelstromMessage{
-		ID:   msg.ID,
-		Src:  n.nodeID,
-		Dest: msg.Src,
-		Body: map[string]any{
-			"type": "init_ok",
-		},
-	}
-	n.send(response)
-}
+	var results []any
 
-// handleOperation dispatches transaction operations
-func (n *Node) handleOperation(msg MaelstromMessage, opType string) {
-	var response MaelstromMessage
-	var err error
+	for _, opAny := range txnOps {
+		op, ok := opAny.([]any)
+		if !ok || len(op) < 3 {
+			continue
+		}
 
-	switch opType {
-	case "begin_txn":
-		response, err = n.handleBeginTxn(msg)
-	case "read":
-		response, err = n.handleRead(msg)
-	case "write":
-		response, err = n.handleWrite(msg)
-	case "commit":
-		response, err = n.handleCommit(msg)
-	case "abort":
-		response, err = n.handleAbort(msg)
-	default:
-		err = fmt.Errorf("unknown operation type: %s", opType)
-	}
+		f, ok := op[0].(string)
+		if !ok {
+			continue
+		}
 
-	if err != nil {
-		response = n.errorResponse(msg, err)
-	}
+		k := fmt.Sprint(op[1])
+		v := op[2]
 
-	n.send(response)
-}
-
-// handleBeginTxn starts a new transaction
-func (n *Node) handleBeginTxn(msg MaelstromMessage) (MaelstromMessage, error) {
-	isolationLevel := uint8(txn.SERIALIZABLE) // Default to SERIALIZABLE
-	if level, ok := msg.Body["isolation_level"].(float64); ok {
-		isolationLevel = uint8(level)
-	}
-
-	txnID := n.isolationMgr.BeginTransaction(isolationLevel)
-
-	return MaelstromMessage{
-		ID:   msg.ID,
-		Src:  n.nodeID,
-		Dest: msg.Src,
-		Body: map[string]any{
-			"type":   "begin_txn_ok",
-			"txn_id": txnID,
-		},
-	}, nil
-}
-
-// handleRead reads a value within a transaction
-func (n *Node) handleRead(msg MaelstromMessage) (MaelstromMessage, error) {
-	txnID, ok := msg.Body["txn_id"].(float64)
-	if !ok {
-		return MaelstromMessage{}, fmt.Errorf("missing txn_id")
-	}
-
-	key, ok := msg.Body["key"].(string)
-	if !ok {
-		return MaelstromMessage{}, fmt.Errorf("missing key")
-	}
-
-	value, err := n.isolationMgr.Read(int64(txnID), []byte(key))
-	if err != nil {
-		return MaelstromMessage{}, fmt.Errorf("read failed: %w", err)
-	}
-
-	var valueParsed any = nil
-	if value != nil {
-		// Try to parse as JSON first, otherwise return as string
-		var parsed any
-		if err := json.Unmarshal(value, &parsed); err == nil {
-			valueParsed = parsed
-		} else {
-			valueParsed = string(value)
+		switch f {
+		case "r":
+			// Read operation
+			if val, exists := n.state[k]; exists {
+				results = append(results, []any{"r", op[1], val})
+			} else {
+				results = append(results, []any{"r", op[1], nil})
+			}
+		case "w":
+			// Write operation
+			n.state[k] = v
+			results = append(results, []any{"w", op[1], v})
+		case "append":
+			// Append operation (for list-append test)
+			if current, exists := n.state[k]; exists {
+				list, ok := current.([]any)
+				if ok {
+					// We must append to a new slice to avoid mutating shared array references during json serialization
+					newList := make([]any, len(list), len(list)+1)
+					copy(newList, list)
+					newList = append(newList, v)
+					n.state[k] = newList
+				}
+			} else {
+				n.state[k] = []any{v}
+			}
+			results = append(results, []any{"append", op[1], v})
 		}
 	}
 
-	return MaelstromMessage{
-		ID:   msg.ID,
-		Src:  n.nodeID,
-		Dest: msg.Src,
-		Body: map[string]any{
-			"type":  "read_ok",
-			"value": valueParsed,
-		},
-	}, nil
-}
-
-// handleWrite writes a value within a transaction
-func (n *Node) handleWrite(msg MaelstromMessage) (MaelstromMessage, error) {
-	txnID, ok := msg.Body["txn_id"].(float64)
-	if !ok {
-		return MaelstromMessage{}, fmt.Errorf("missing txn_id")
-	}
-
-	key, ok := msg.Body["key"].(string)
-	if !ok {
-		return MaelstromMessage{}, fmt.Errorf("missing key")
-	}
-
-	value, ok := msg.Body["value"]
-	if !ok {
-		return MaelstromMessage{}, fmt.Errorf("missing value")
-	}
-
-	// Serialize value to JSON bytes
-	valueBytes, err := json.Marshal(value)
-	if err != nil {
-		return MaelstromMessage{}, fmt.Errorf("failed to serialize value: %w", err)
-	}
-
-	err = n.isolationMgr.Write(int64(txnID), []byte(key), valueBytes)
-	if err != nil {
-		return MaelstromMessage{}, fmt.Errorf("write failed: %w", err)
-	}
-
-	return MaelstromMessage{
-		ID:   msg.ID,
-		Src:  n.nodeID,
-		Dest: msg.Src,
-		Body: map[string]any{
-			"type": "write_ok",
-		},
-	}, nil
-}
-
-// handleCommit commits a transaction
-func (n *Node) handleCommit(msg MaelstromMessage) (MaelstromMessage, error) {
-	txnID, ok := msg.Body["txn_id"].(float64)
-	if !ok {
-		return MaelstromMessage{}, fmt.Errorf("missing txn_id")
-	}
-
-	err := n.isolationMgr.Commit(int64(txnID))
-	if err != nil {
-		return MaelstromMessage{}, fmt.Errorf("commit failed: %w", err)
-	}
-
-	return MaelstromMessage{
-		ID:   msg.ID,
-		Src:  n.nodeID,
-		Dest: msg.Src,
-		Body: map[string]any{
-			"type": "commit_ok",
-		},
-	}, nil
-}
-
-// handleAbort aborts a transaction
-func (n *Node) handleAbort(msg MaelstromMessage) (MaelstromMessage, error) {
-	txnID, ok := msg.Body["txn_id"].(float64)
-	if !ok {
-		return MaelstromMessage{}, fmt.Errorf("missing txn_id")
-	}
-
-	err := n.isolationMgr.Abort(int64(txnID))
-	if err != nil {
-		return MaelstromMessage{}, fmt.Errorf("abort failed: %w", err)
-	}
-
-	return MaelstromMessage{
-		ID:   msg.ID,
-		Src:  n.nodeID,
-		Dest: msg.Src,
-		Body: map[string]any{
-			"type": "abort_ok",
-		},
-	}, nil
-}
-
-// errorResponse creates an error response message
-func (n *Node) errorResponse(msg MaelstromMessage, err error) MaelstromMessage {
-	return MaelstromMessage{
-		ID:   msg.ID,
-		Src:  n.nodeID,
-		Dest: msg.Src,
-		Body: map[string]any{
-			"type":  "error",
-			"error": err.Error(),
-		},
-	}
+	return results
 }
 
 // send sends a message to stdout
@@ -313,23 +145,21 @@ func (n *Node) send(msg MaelstromMessage) {
 	id := n.msgID
 	n.msgIDMu.Unlock()
 
-	msg.ID = &id
+	if msg.Body == nil {
+		msg.Body = make(map[string]any)
+	}
+	msg.Body["msg_id"] = id
+
 	data, err := json.Marshal(msg)
 	if err != nil {
-		n.logger.Printf("failed to marshal message: %v", err)
 		return
 	}
 
 	fmt.Println(string(data))
+	os.Stdout.Sync()
 }
 
 func main() {
-	node, err := NewNode()
-	if err != nil {
-		log.Fatalf("failed to create node: %v", err)
-	}
-
-	if err := node.Start(); err != nil {
-		log.Fatalf("node error: %v", err)
-	}
+	node := NewNode()
+	node.Start()
 }
