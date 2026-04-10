@@ -72,3 +72,103 @@ func hash(data []byte) (uint32, uint32) {
 	val := h.Sum64()
 	return uint32(val), uint32(val >> 32)
 }
+
+// BloomFilterAllocator handles optimal bloom filter memory allocation across LSM levels
+// based on the Autumn paper's optimization strategy (Section 3, Bloom Filter Optimization).
+//
+// The key insight: For point queries that don't find the key, the cost is the sum of FPRs
+// across all levels. Since lower levels have fewer entries but each miss costs the same,
+// allocating more bits to lower levels is memory-efficient.
+//
+// Optimal FPR at level i:
+// p_i = O(R · c^((L-i)*(L-i-1)/2) / T^(L-i))
+// where R is the desired read cost and c, T are from the Garnering policy.
+type BloomFilterAllocator struct {
+	T              float64 // Base capacity ratio
+	C              float64 // Scaling factor
+	TotalMemBudget uint    // Total bits available for all bloom filters
+	NumLevels      int     // Total number of levels
+}
+
+// NewBloomFilterAllocator creates an allocator for optimal bloom filter distribution
+func NewBloomFilterAllocator(t float64, c float64, memBudgetBytes uint, numLevels int) *BloomFilterAllocator {
+	return &BloomFilterAllocator{
+		T:              t,
+		C:              c,
+		TotalMemBudget: memBudgetBytes * 8, // Convert bytes to bits
+		NumLevels:      numLevels,
+	}
+}
+
+// AllocateBitsPerLevel returns the optimal number of bits to allocate to each level's bloom filter.
+// This implements the Autumn paper's Monkey optimization strategy.
+//
+// The allocation prioritizes lower levels where each bit saves more disk I/Os.
+func (bfa *BloomFilterAllocator) AllocateBitsPerLevel(itemsPerLevel []uint) []uint {
+	if len(itemsPerLevel) == 0 {
+		return []uint{}
+	}
+
+	bitsPerLevel := make([]uint, len(itemsPerLevel))
+
+	// Calculate the weight for each level based on Garnering structure
+	// Lower levels get exponentially more weight per item
+	weights := make([]float64, len(itemsPerLevel))
+	totalWeight := 0.0
+
+	for i := 0; i < len(itemsPerLevel); i++ {
+		if itemsPerLevel[i] == 0 {
+			weights[i] = 0
+			continue
+		}
+
+		// Weight is inversely proportional to level size
+		// Lower levels (smaller indices) get higher weights
+		levelIndex := len(itemsPerLevel) - 1 - i
+		exponent := float64(levelIndex * (levelIndex + 1) / 2)
+		weight := math.Pow(bfa.C, exponent) / math.Pow(bfa.T, float64(levelIndex))
+		weights[i] = weight * float64(itemsPerLevel[i])
+		totalWeight += weights[i]
+	}
+
+	// Distribute memory budget proportionally
+	if totalWeight > 0 {
+		for i := 0; i < len(itemsPerLevel); i++ {
+			allocation := uint(math.Round((weights[i] / totalWeight) * float64(bfa.TotalMemBudget)))
+			bitsPerLevel[i] = allocation
+		}
+	}
+
+	return bitsPerLevel
+}
+
+// CalculateOptimalFPR computes the optimal false positive rate for a given level
+// based on the Garnering policy parameters.
+//
+// Formula from Autumn paper (Equation 9):
+// p_{L-i} = p_L · c^(i(i-1)/2) / T^i
+func (bfa *BloomFilterAllocator) CalculateOptimalFPR(levelIndex int) float64 {
+	if levelIndex >= bfa.NumLevels {
+		return 1.0 // Last level has FPR = 1 (no filtering)
+	}
+
+	if levelIndex == bfa.NumLevels-1 {
+		return 1.0 // Last level (largest) has FPR = 1.0
+	}
+
+	distanceFromEnd := bfa.NumLevels - 1 - levelIndex
+	exponent := float64(distanceFromEnd * (distanceFromEnd - 1) / 2)
+
+	// Base FPR for last level is 1.0
+	fpr := 1.0 * math.Pow(bfa.C, exponent) / math.Pow(bfa.T, float64(distanceFromEnd))
+
+	// Clamp to valid range
+	if fpr < 0.0001 {
+		return 0.0001
+	}
+	if fpr > 1.0 {
+		return 1.0
+	}
+
+	return fpr
+}
