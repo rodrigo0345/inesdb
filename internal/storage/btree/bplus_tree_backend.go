@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/rodrigo0345/omag/internal/storage"
 	"github.com/rodrigo0345/omag/internal/storage/buffer"
 	"github.com/rodrigo0345/omag/internal/storage/page"
 )
@@ -390,8 +391,8 @@ func (b *BPlusTreeBackend) Delete(key []byte) error {
 }
 
 // Scan returns all key-value pairs in the tree
-func (b *BPlusTreeBackend) Scan() ([]struct{ Key, Value []byte }, error) {
-	var results []struct{ Key, Value []byte }
+func (b *BPlusTreeBackend) Scan() ([]storage.ScanEntry, error) {
+	var results []storage.ScanEntry
 
 	rootID := b.meta.RootPage()
 	if rootID == 0 {
@@ -415,7 +416,7 @@ func (b *BPlusTreeBackend) Scan() ([]struct{ Key, Value []byte }, error) {
 		cell := leaf.GetCell(offset)
 		// Only include non-deleted entries (deleted entries have empty values)
 		if len(cell.Value) > 0 {
-			results = append(results, struct{ Key, Value []byte }{
+			results = append(results, storage.ScanEntry{
 				Key:   cell.Key,
 				Value: cell.Value,
 			})

@@ -31,7 +31,7 @@ func NewTransactionManager(
 		writeHandler = NewDefaultWriteHandler(storage, rollbackMgr, bufferMgr, logMgr)
 	} else {
 		// MVCC or other snapshot-based system
-		writeHandler = NewMVCCWriteHandler(storage, bufferMgr, nil)
+		writeHandler = NewMVCCWriteHandler(storage, bufferMgr, nil, rollbackMgr)
 	}
 
 	return &TransactionManager{

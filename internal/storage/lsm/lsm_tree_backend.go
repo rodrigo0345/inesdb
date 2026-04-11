@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/rodrigo0345/omag/internal/storage"
 	"github.com/rodrigo0345/omag/internal/storage/buffer"
 	"github.com/rodrigo0345/omag/internal/txn/log"
 )
@@ -318,4 +319,69 @@ func (l *LSMTreeBackend) Delete(key []byte) error {
 		l.flush()
 	}
 	return nil
+}
+
+// Scan returns all key-value pairs in the LSM tree (excluding tombstoned entries)
+func (l *LSMTreeBackend) Scan() ([]storage.ScanEntry, error) {
+	var results []storage.ScanEntry
+	seenKeys := make(map[string]bool)
+
+	// First, collect all iterators from memtable and SSTables
+	l.memtableLock.RLock()
+	memtableIter := newSSTableIter(&SSTable{
+		data:       l.memtable.data,
+		tombstones: l.memtable.tombstones,
+	}, 1000000) // highest priority (newest)
+	l.memtableLock.RUnlock()
+
+	// Collect SSTables from all levels (newest first)
+	l.levelsLock.RLock()
+	allTables := make([]*SSTable, 0)
+	for lvl := 0; lvl < len(l.levels); lvl++ {
+		for _, ss := range l.levels[lvl] {
+			allTables = append(allTables, ss)
+		}
+	}
+	l.levelsLock.RUnlock()
+
+	// Create iterators for all SSTables
+	iters := make([]*sstableIter, 0, len(allTables)+1)
+	iters = append(iters, memtableIter)
+	for priority, ss := range allTables {
+		iters = append(iters, newSSTableIter(ss, len(allTables)-priority))
+	}
+
+	// Use heap to merge all iterators
+	h := &iterHeap{}
+	for _, it := range iters {
+		if it.next() {
+			heap.Push(h, it)
+		}
+	}
+
+	// Process entries in sorted key order
+	for h.Len() > 0 {
+		it := heap.Pop(h).(*sstableIter)
+		key := it.key()
+
+		// Skip if we've already seen this key (newer version already processed)
+		if !seenKeys[key] {
+			seenKeys[key] = true
+
+			// Skip tombstoned entries
+			if !it.IsTombstoned() {
+				results = append(results, storage.ScanEntry{
+					Key:   []byte(key),
+					Value: it.val(),
+				})
+			}
+		}
+
+		// Advance iterator
+		if it.next() {
+			heap.Push(h, it)
+		}
+	}
+
+	return results, nil
 }

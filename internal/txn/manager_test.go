@@ -3,13 +3,15 @@ package txn
 import (
 	"testing"
 
+	"github.com/rodrigo0345/omag/internal/storage"
+	"github.com/rodrigo0345/omag/internal/storage/schema"
 	"github.com/rodrigo0345/omag/internal/txn/log"
 )
 
 // mockIsolationManager implements IIsolationManager for testing
 type mockIsolationManager struct{}
 
-func (m *mockIsolationManager) BeginTransaction(isolationLevel uint8) int64 {
+func (m *mockIsolationManager) BeginTransaction(isolationLevel uint8, tableName string, tableSchema *schema.TableSchema) int64 {
 	return 1
 }
 
@@ -77,6 +79,10 @@ func (m *mockStorageEngine) Put(key []byte, value []byte) error {
 
 func (m *mockStorageEngine) Delete(key []byte) error {
 	return nil
+}
+
+func (m *mockStorageEngine) Scan() ([]storage.ScanEntry, error) {
+	return []storage.ScanEntry{}, nil
 }
 
 // TestNewTransactionManager tests creating a transaction manager

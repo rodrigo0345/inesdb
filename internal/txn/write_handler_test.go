@@ -54,8 +54,9 @@ func TestDefaultWriteHandlerCreation(t *testing.T) {
 func TestMVCCWriteHandlerCreation(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	mockStorage := &mockStorageEngine{}
+	mockRollbackMgr := NewRollbackManager(mockBufMgr)
 
-	handler := NewMVCCWriteHandler(mockStorage, mockBufMgr, nil)
+	handler := NewMVCCWriteHandler(mockStorage, mockBufMgr, nil, mockRollbackMgr)
 
 	if handler == nil {
 		t.Fatal("expected non-nil MVCC write handler")

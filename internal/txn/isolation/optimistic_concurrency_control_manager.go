@@ -5,21 +5,22 @@ import (
 
 	"github.com/rodrigo0345/omag/internal/storage"
 	"github.com/rodrigo0345/omag/internal/storage/buffer"
+	"github.com/rodrigo0345/omag/internal/storage/schema"
 	"github.com/rodrigo0345/omag/internal/txn"
 	"github.com/rodrigo0345/omag/internal/txn/log"
 )
 
-// OptimisticConcurrencyControlManager implements OCC isolation
-// Transactions execute optimistically without locks, then validate on commit
 type OptimisticConcurrencyControlManager struct {
 	transactions    map[TransactionID]*txn.Transaction
 	logManager      log.ILogManager
 	bufferManager   buffer.IBufferPoolManager
-	writeHandler    txn.WriteHandler     // For coordinating writes with WAL
-	rollbackManager *txn.RollbackManager // For abort handling
+	writeHandler    txn.WriteHandler
+	rollbackManager *txn.RollbackManager
 	primaryIndex    storage.IStorageEngine
+	indexManagers   map[string]*schema.SecondaryIndexManager
 	nextTxnID       int64
-	// TODO: Add conflict detection, read set/write set tracking, validation
+	indexSnapshots  map[TransactionID]map[string]string
+	userWrites      map[TransactionID]map[string]bool
 }
 
 // NewOptimisticConcurrencyControlManager creates a new OCC isolation manager
@@ -29,6 +30,7 @@ func NewOptimisticConcurrencyControlManager(
 	writeHandler txn.WriteHandler,
 	rollbackMgr *txn.RollbackManager,
 	primaryIndex storage.IStorageEngine,
+	indexManagers map[string]*schema.SecondaryIndexManager,
 ) *OptimisticConcurrencyControlManager {
 	return &OptimisticConcurrencyControlManager{
 		transactions:    make(map[TransactionID]*txn.Transaction),
@@ -37,18 +39,24 @@ func NewOptimisticConcurrencyControlManager(
 		writeHandler:    writeHandler,
 		rollbackManager: rollbackMgr,
 		primaryIndex:    primaryIndex,
+		indexManagers:   indexManagers,
 		nextTxnID:       1,
+		indexSnapshots:  make(map[TransactionID]map[string]string),
+		userWrites:      make(map[TransactionID]map[string]bool),
 	}
 }
 
-func (m *OptimisticConcurrencyControlManager) BeginTransaction(isolationLevel uint8) int64 {
+func (m *OptimisticConcurrencyControlManager) BeginTransaction(isolationLevel uint8, tableName string, tableSchema *schema.TableSchema) int64 {
 	txnID := m.nextTxnID
 	m.nextTxnID++
 
 	transaction := txn.NewTransaction(uint64(txnID), isolationLevel)
+	transaction.SetTableContext(tableName, tableSchema)
 	m.transactions[TransactionID(txnID)] = transaction
 
-	// TODO: Initialize read set and write set for this transaction
+	m.indexSnapshots[TransactionID(txnID)] = m.captureIndexSnapshot(tableName)
+	m.userWrites[TransactionID(txnID)] = make(map[string]bool)
+
 	return txnID
 }
 
@@ -58,9 +66,7 @@ func (m *OptimisticConcurrencyControlManager) Read(txnID int64, Key []byte) ([]b
 		return nil, fmt.Errorf("transaction %d not found", txnID)
 	}
 
-	// OCC: Track read in read set, then read value
-	// TODO: Add to transaction's read set for validation phase
-	_ = transaction // silence unused
+	_ = transaction
 	return m.primaryIndex.Get(Key)
 }
 
@@ -70,15 +76,30 @@ func (m *OptimisticConcurrencyControlManager) Write(txnID int64, Key []byte, Val
 		return fmt.Errorf("transaction %d not found", txnID)
 	}
 
-	// OCC: Buffer writes in transaction (don't apply to storage immediately)
-	// TODO: Cache writes instead of applying immediately
+	tableName, tableSchema := transaction.GetTableContext()
+
+	if m.userWrites[TransactionID(txnID)] != nil {
+		m.userWrites[TransactionID(txnID)][tableName] = true
+	}
+
+	// Set index context if indexes exist for this table
+	if tableSchema != nil && m.indexManagers != nil {
+		if indexMgr, exists := m.indexManagers[tableName]; exists && indexMgr != nil {
+			if err := m.writeHandler.SetIndexContext(tableSchema, indexMgr); err != nil {
+				return fmt.Errorf("failed to set index context: %w", err)
+			}
+		}
+	}
 
 	// For now, use write handler to apply to storage
 	writeOp := txn.WriteOperation{
-		Key:    Key,
-		Value:  Value,
-		PageID: 0, // TODO: determine actual page ID
-		Offset: 0, // TODO: determine actual offset
+		Key:        Key,
+		Value:      Value,
+		PageID:     0, // TODO: determine actual page ID
+		Offset:     0, // TODO: determine actual offset
+		TableName:  tableName,
+		SchemaInfo: tableSchema,
+		PrimaryKey: Key,
 	}
 
 	return m.writeHandler.HandleWrite(transaction, writeOp)
@@ -91,8 +112,15 @@ func (m *OptimisticConcurrencyControlManager) Commit(txnID int64) error {
 	}
 
 	// OCC: Validation phase
-	// TODO: Check for conflicts with concurrent transactions
-	// TODO: If validation passes, commit; otherwise abort
+	// Check for conflicts with concurrent transactions
+	// For indexes: verify that indexes haven't been modified by writes
+	tableName, _ := transaction.GetTableContext()
+	if tableName != "" && m.userWrites[TransactionID(txnID)][tableName] {
+		if err := m.detectIndexConflicts(TransactionID(txnID), tableName); err != nil {
+			m.rollbackManager.RollbackTransaction(transaction, nil, nil)
+			return fmt.Errorf("OCC index conflict detection failed: %w", err)
+		}
+	}
 
 	transaction.Commit()
 
@@ -108,6 +136,9 @@ func (m *OptimisticConcurrencyControlManager) Commit(txnID int64) error {
 		m.logManager.Flush(lsn)
 	}
 
+	delete(m.indexSnapshots, TransactionID(txnID))
+	delete(m.userWrites, TransactionID(txnID))
+
 	return nil
 }
 
@@ -117,10 +148,57 @@ func (m *OptimisticConcurrencyControlManager) Abort(txnID int64) error {
 		return fmt.Errorf("transaction %d not found", txnID)
 	}
 
-	// Use RollbackManager to coordinate abort
+	delete(m.indexSnapshots, TransactionID(txnID))
+	delete(m.userWrites, TransactionID(txnID))
+
 	return m.rollbackManager.RollbackTransaction(transaction, nil, nil)
 }
 
 func (m *OptimisticConcurrencyControlManager) Close() error {
+	return nil
+}
+
+// captureIndexSnapshot captures the state of indexes for the given table
+func (m *OptimisticConcurrencyControlManager) captureIndexSnapshot(tableName string) map[string]string {
+	snapshot := make(map[string]string)
+
+	indexMgr, exists := m.indexManagers[tableName]
+	if !exists || indexMgr == nil {
+		return snapshot
+	}
+
+	for _, indexName := range indexMgr.GetAllIndexNames() {
+		stats, err := indexMgr.GetIndexStats(indexName)
+		if err == nil && stats != nil {
+			snapshot[indexName] = fmt.Sprintf("idx:%s:%d:%d", indexName, stats.NumEntries, stats.SizeBytes)
+		} else {
+			snapshot[indexName] = fmt.Sprintf("idx:%s:exists", indexName)
+		}
+	}
+
+	return snapshot
+}
+
+// detectIndexConflicts detects if indexes have been modified since transaction start
+func (m *OptimisticConcurrencyControlManager) detectIndexConflicts(txnID TransactionID, tableName string) error {
+	startSnapshot, exists := m.indexSnapshots[txnID]
+	if !exists {
+		return nil
+	}
+
+	currentSnapshot := m.captureIndexSnapshot(tableName)
+
+	for indexName, startFingerprint := range startSnapshot {
+		if currentFingerprint, ok := currentSnapshot[indexName]; !ok {
+			return fmt.Errorf("index %s was dropped during transaction", indexName)
+		} else if currentFingerprint != startFingerprint {
+			return fmt.Errorf("write-write conflict detected on index %s", indexName)
+		}
+	}
+
+	if len(currentSnapshot) > len(startSnapshot) {
+		return fmt.Errorf("new indexes added during transaction")
+	}
+
 	return nil
 }

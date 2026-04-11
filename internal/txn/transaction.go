@@ -2,6 +2,7 @@ package txn
 
 import (
 	"github.com/rodrigo0345/omag/internal/storage/buffer"
+	"github.com/rodrigo0345/omag/internal/storage/schema"
 	"github.com/rodrigo0345/omag/internal/txn/undo"
 )
 
@@ -22,24 +23,41 @@ const (
 )
 
 type Transaction struct {
-	txnID          uint64
-	state          TxnState
-	sharedLocks    [][]byte
-	exclusiveLocks [][]byte
-	undoLog        *undo.UndoLog
-	isolationLevel uint8
+	txnID            uint64
+	state            TxnState
+	sharedLocks      [][]byte
+	exclusiveLocks   [][]byte
+	undoLog          *undo.UndoLog
+	isolationLevel   uint8
+	tableName        string
+	tableSchema      *schema.TableSchema
+	cleanupCallbacks []func() error // Index cleanup callbacks to run on rollback
 }
 
 // NewTransaction creates a new transaction with initialized undo log
 func NewTransaction(txnID uint64, isolationLevel uint8) *Transaction {
 	return &Transaction{
-		txnID:          txnID,
-		state:          ACTIVE,
-		sharedLocks:    make([][]byte, 0),
-		exclusiveLocks: make([][]byte, 0),
-		undoLog:        undo.NewUndoLog(txnID),
-		isolationLevel: isolationLevel,
+		txnID:            txnID,
+		state:            ACTIVE,
+		sharedLocks:      make([][]byte, 0),
+		exclusiveLocks:   make([][]byte, 0),
+		undoLog:          undo.NewUndoLog(txnID),
+		isolationLevel:   isolationLevel,
+		tableName:        "",
+		tableSchema:      nil,
+		cleanupCallbacks: make([]func() error, 0),
 	}
+}
+
+// SetTableContext sets the table context for this transaction
+func (t *Transaction) SetTableContext(tableName string, tableSchema *schema.TableSchema) {
+	t.tableName = tableName
+	t.tableSchema = tableSchema
+}
+
+// GetTableContext returns the table context for this transaction
+func (t *Transaction) GetTableContext() (string, *schema.TableSchema) {
+	return t.tableName, t.tableSchema
 }
 
 func (t *Transaction) GetID() uint64 {
@@ -136,4 +154,23 @@ func bytesEqual(a, b []byte) bool {
 		}
 	}
 	return true
+}
+
+// RegisterCleanupCallback registers a cleanup function to be executed on rollback
+// Cleanup functions are called in order during transaction rollback
+func (t *Transaction) RegisterCleanupCallback(cleanup func() error) {
+	t.cleanupCallbacks = append(t.cleanupCallbacks, cleanup)
+}
+
+// ExecuteCleanupCallbacks executes all registered cleanup callbacks
+// Returns error if any cleanup fails
+func (t *Transaction) ExecuteCleanupCallbacks() error {
+	for _, cleanup := range t.cleanupCallbacks {
+		if cleanup != nil {
+			if err := cleanup(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

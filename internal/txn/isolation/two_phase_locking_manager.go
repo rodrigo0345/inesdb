@@ -1,10 +1,12 @@
 package isolation
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/rodrigo0345/omag/internal/storage"
 	"github.com/rodrigo0345/omag/internal/storage/buffer"
+	"github.com/rodrigo0345/omag/internal/storage/schema"
 	"github.com/rodrigo0345/omag/internal/txn"
 	"github.com/rodrigo0345/omag/internal/txn/log"
 )
@@ -18,6 +20,7 @@ type TwoPhaseLockingManager struct {
 	writeHandler    txn.WriteHandler
 	rollbackManager *txn.RollbackManager
 	primaryIndex    storage.IStorageEngine
+	indexManagers   map[string]*schema.SecondaryIndexManager
 }
 
 func NewTwoPhaseLockingManager(
@@ -26,6 +29,7 @@ func NewTwoPhaseLockingManager(
 	writeHandler txn.WriteHandler,
 	rollbackMgr *txn.RollbackManager,
 	primaryIndex storage.IStorageEngine,
+	indexManagers map[string]*schema.SecondaryIndexManager,
 ) *TwoPhaseLockingManager {
 	return &TwoPhaseLockingManager{
 		transactions:    make(map[TransactionID]*txn.Transaction),
@@ -34,13 +38,14 @@ func NewTwoPhaseLockingManager(
 		writeHandler:    writeHandler,
 		rollbackManager: rollbackMgr,
 		primaryIndex:    primaryIndex,
+		indexManagers:   indexManagers,
 	}
 }
 
-func (m *TwoPhaseLockingManager) BeginTransaction(isolationLevel uint8) int64 {
-	// TODO: uuid7 generate key
-	txnID := int64(len(m.transactions) + 1) // Simple ID generation for now
+func (m *TwoPhaseLockingManager) BeginTransaction(isolationLevel uint8, tableName string, tableSchema *schema.TableSchema) int64 {
+	txnID := int64(len(m.transactions) + 1)
 	txn := txn.NewTransaction(uint64(txnID), isolationLevel)
+	txn.SetTableContext(tableName, tableSchema)
 	m.transactions[TransactionID(txnID)] = txn
 	return txnID
 }
@@ -63,11 +68,28 @@ func (m *TwoPhaseLockingManager) Write(txnID int64, Key []byte, Value []byte) er
 
 	transaction.AddExclusiveLock(Key)
 
+	tableName, tableSchema := transaction.GetTableContext()
+
+	if err := m.acquireIndexLocks(transaction, tableName, tableSchema, Value); err != nil {
+		return fmt.Errorf("failed to acquire index locks: %w", err)
+	}
+
+	if tableSchema != nil && m.indexManagers != nil {
+		if indexMgr, exists := m.indexManagers[tableName]; exists && indexMgr != nil {
+			if err := m.writeHandler.SetIndexContext(tableSchema, indexMgr); err != nil {
+				return fmt.Errorf("failed to set index context: %w", err)
+			}
+		}
+	}
+
 	writeOp := txn.WriteOperation{
-		Key:    Key,
-		Value:  Value,
-		PageID: 0,
-		Offset: 0,
+		Key:        Key,
+		Value:      Value,
+		PageID:     0,
+		Offset:     0,
+		TableName:  tableName,
+		SchemaInfo: tableSchema,
+		PrimaryKey: Key,
 	}
 
 	return m.writeHandler.HandleWrite(transaction, writeOp)
@@ -116,5 +138,52 @@ func (m *TwoPhaseLockingManager) Abort(txnID int64) error {
 }
 
 func (m *TwoPhaseLockingManager) Close() error {
+	return nil
+}
+
+func makeIndexLockKey(tableName, indexName string, indexValue []byte) []byte {
+	var buf bytes.Buffer
+	buf.WriteString("__index:")
+	buf.WriteString(tableName)
+	buf.WriteString(":")
+	buf.WriteString(indexName)
+	buf.WriteString(":")
+	buf.Write(indexValue)
+	return buf.Bytes()
+}
+
+func (m *TwoPhaseLockingManager) acquireIndexLocks(transaction *txn.Transaction, tableName string, tableSchema *schema.TableSchema, rowData []byte) error {
+	if tableSchema == nil || len(tableSchema.Indexes) == 0 {
+		return nil
+	}
+
+	indexValues, err := txn.ExtractIndexValues(tableSchema, rowData)
+	if err != nil {
+		return fmt.Errorf("failed to extract index values for locking: %w", err)
+	}
+
+	for indexName, indexValue := range indexValues {
+		lockKey := makeIndexLockKey(tableName, indexName, indexValue)
+		transaction.AddExclusiveLock(lockKey)
+	}
+
+	return nil
+}
+
+func (m *TwoPhaseLockingManager) releaseIndexLocks(transaction *txn.Transaction, tableName string, tableSchema *schema.TableSchema, rowData []byte) error {
+	if tableSchema == nil || len(tableSchema.Indexes) == 0 {
+		return nil
+	}
+
+	indexValues, err := txn.ExtractIndexValues(tableSchema, rowData)
+	if err != nil {
+		return fmt.Errorf("failed to extract index values for lock release: %w", err)
+	}
+
+	for indexName, indexValue := range indexValues {
+		lockKey := makeIndexLockKey(tableName, indexName, indexValue)
+		transaction.RemoveExclusiveLock(lockKey)
+	}
+
 	return nil
 }
