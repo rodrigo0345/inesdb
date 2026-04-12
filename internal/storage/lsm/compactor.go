@@ -11,9 +11,9 @@ type CompactionPolicy interface {
 }
 
 type GarneringCompactionPolicy struct {
-	T          float64 // Base capacity ratio between last two levels (typically 10)
-	C          float64 // Scaling factor (0 < c < 1, typically 0.5). Controls level expansion rate
-	L0Capacity int     // Base capacity for Level 0 (number of SSTables before compaction)
+	T          float64
+	C          float64
+	L0Capacity int
 	MemtableB  int
 }
 

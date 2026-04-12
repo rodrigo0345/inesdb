@@ -23,7 +23,6 @@ type OptimisticConcurrencyControlManager struct {
 	userWrites      map[TransactionID]map[string]bool
 }
 
-// NewOptimisticConcurrencyControlManager creates a new OCC isolation manager
 func NewOptimisticConcurrencyControlManager(
 	logMgr log.ILogManager,
 	bufferMgr buffer.IBufferPoolManager,
@@ -82,7 +81,6 @@ func (m *OptimisticConcurrencyControlManager) Write(txnID int64, Key []byte, Val
 		m.userWrites[TransactionID(txnID)][tableName] = true
 	}
 
-	// Set index context if indexes exist for this table
 	if tableSchema != nil && m.indexManagers != nil {
 		if indexMgr, exists := m.indexManagers[tableName]; exists && indexMgr != nil {
 			if err := m.writeHandler.SetIndexContext(tableSchema, indexMgr); err != nil {
@@ -91,12 +89,11 @@ func (m *OptimisticConcurrencyControlManager) Write(txnID int64, Key []byte, Val
 		}
 	}
 
-	// For now, use write handler to apply to storage
 	writeOp := txn.WriteOperation{
 		Key:        Key,
 		Value:      Value,
-		PageID:     0, // TODO: determine actual page ID
-		Offset:     0, // TODO: determine actual offset
+		PageID:     0,
+		Offset:     0,
 		TableName:  tableName,
 		SchemaInfo: tableSchema,
 		PrimaryKey: Key,
@@ -111,9 +108,6 @@ func (m *OptimisticConcurrencyControlManager) Commit(txnID int64) error {
 		return fmt.Errorf("transaction %d not found", txnID)
 	}
 
-	// OCC: Validation phase
-	// Check for conflicts with concurrent transactions
-	// For indexes: verify that indexes haven't been modified by writes
 	tableName, _ := transaction.GetTableContext()
 	if tableName != "" && m.userWrites[TransactionID(txnID)][tableName] {
 		if err := m.detectIndexConflicts(TransactionID(txnID), tableName); err != nil {
@@ -158,7 +152,6 @@ func (m *OptimisticConcurrencyControlManager) Close() error {
 	return nil
 }
 
-// captureIndexSnapshot captures the state of indexes for the given table
 func (m *OptimisticConcurrencyControlManager) captureIndexSnapshot(tableName string) map[string]string {
 	snapshot := make(map[string]string)
 
@@ -179,7 +172,6 @@ func (m *OptimisticConcurrencyControlManager) captureIndexSnapshot(tableName str
 	return snapshot
 }
 
-// detectIndexConflicts detects if indexes have been modified since transaction start
 func (m *OptimisticConcurrencyControlManager) detectIndexConflicts(txnID TransactionID, tableName string) error {
 	startSnapshot, exists := m.indexSnapshots[txnID]
 	if !exists {

@@ -6,7 +6,6 @@ import (
 	"github.com/rodrigo0345/omag/internal/txn/undo"
 )
 
-// TestNewTransaction tests transaction creation
 func TestNewTransaction(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -42,22 +41,18 @@ func TestNewTransaction(t *testing.T) {
 	}
 }
 
-// TestTransactionState tests transaction state transitions
 func TestTransactionState(t *testing.T) {
 	txn := NewTransaction(1, READ_COMMITTED)
 
-	// Initially ACTIVE
 	if txn.GetState() != ACTIVE {
 		t.Errorf("initial state should be ACTIVE, got %v", txn.GetState())
 	}
 
-	// Commit
 	txn.Commit()
 	if txn.GetState() != COMMITTED {
 		t.Errorf("expected COMMITTED state, got %v", txn.GetState())
 	}
 
-	// Test abort on a new transaction
 	txn2 := NewTransaction(2, READ_UNCOMMITTED)
 	txn2.Abort()
 	if txn2.GetState() != ABORTED {
@@ -65,74 +60,58 @@ func TestTransactionState(t *testing.T) {
 	}
 }
 
-// TestTransactionSharedLocks tests shared lock operations
 func TestTransactionSharedLocks(t *testing.T) {
 	txn := NewTransaction(1, READ_COMMITTED)
 	key1 := []byte("key1")
 	key2 := []byte("key2")
 
-	// Add shared locks
 	txn.AddSharedLock(key1)
 	txn.AddSharedLock(key2)
 
-	// Remove shared lock
 	txn.RemoveSharedLock(key1)
 
-	// Remove another
 	txn.RemoveSharedLock(key2)
 }
 
-// TestTransactionExclusiveLocks tests exclusive lock operations
 func TestTransactionExclusiveLocks(t *testing.T) {
 	txn := NewTransaction(1, SERIALIZABLE)
 	key1 := []byte("key1")
 	key2 := []byte("key2")
 
-	// Add exclusive locks
 	txn.AddExclusiveLock(key1)
 	txn.AddExclusiveLock(key2)
 
-	// Remove exclusive lock
 	txn.RemoveExclusiveLock(key1)
 
-	// Remove another
 	txn.RemoveExclusiveLock(key2)
 }
 
-// TestRemoveSharedLockNonExistent tests removing non-existent shared lock
 func TestRemoveSharedLockNonExistent(t *testing.T) {
 	txn := NewTransaction(1, READ_COMMITTED)
 	key := []byte("nonexistent")
 
-	// Should not panic when removing non-existent lock
 	txn.RemoveSharedLock(key)
 }
 
-// TestRemoveExclusiveLockNonExistent tests removing non-existent exclusive lock
 func TestRemoveExclusiveLockNonExistent(t *testing.T) {
 	txn := NewTransaction(1, READ_COMMITTED)
 	key := []byte("nonexistent")
 
-	// Should not panic when removing non-existent lock
 	txn.RemoveExclusiveLock(key)
 }
 
-// TestTransactionMixedLocks tests mixing shared and exclusive locks
 func TestTransactionMixedLocks(t *testing.T) {
 	txn := NewTransaction(1, SERIALIZABLE)
 	keyA := []byte("keyA")
 	keyB := []byte("keyB")
 
-	// Add mixed locks
 	txn.AddSharedLock(keyA)
 	txn.AddExclusiveLock(keyB)
 
-	// Remove them
 	txn.RemoveSharedLock(keyA)
 	txn.RemoveExclusiveLock(keyB)
 }
 
-// TestTransactionGetUndoLog tests getting undo log
 func TestTransactionGetUndoLog(t *testing.T) {
 	txn := NewTransaction(1, READ_COMMITTED)
 	undoLog := txn.GetUndoLog()
@@ -142,7 +121,6 @@ func TestTransactionGetUndoLog(t *testing.T) {
 	}
 }
 
-// TestTransactionGetIsolationLevel tests getting isolation level
 func TestTransactionGetIsolationLevel(t *testing.T) {
 	tests := []struct {
 		level uint8
@@ -161,7 +139,6 @@ func TestTransactionGetIsolationLevel(t *testing.T) {
 	}
 }
 
-// TestBytesEqual tests the bytesEqual helper function
 func TestBytesEqual(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -187,39 +164,32 @@ func TestBytesEqual(t *testing.T) {
 	}
 }
 
-// TestTransactionDuplicateLocks tests handling of duplicate locks
 func TestTransactionDuplicateLocks(t *testing.T) {
 	txn := NewTransaction(1, SERIALIZABLE)
 	key := []byte("key")
 
-	// Add same lock twice
 	txn.AddSharedLock(key)
-	txn.AddSharedLock(key) // Add duplicate
+	txn.AddSharedLock(key)
 
-	// Remove should only remove first occurrence
 	txn.RemoveSharedLock(key)
 
-	// Add exclusive lock multiple times
 	txn.AddExclusiveLock(key)
 	txn.AddExclusiveLock(key)
 
 	txn.RemoveExclusiveLock(key)
 }
 
-// TestTransactionSavePoint tests savepoint functionality
 func TestTransactionSavePoint(t *testing.T) {
 	txn := NewTransaction(1, READ_COMMITTED)
 
-	// Get savepoint - should work
 	point := txn.SavePoint()
 	if point < 0 {
 		t.Errorf("expected non-negative savepoint, got %d", point)
 	}
 }
 
-// TestTransactionGetID tests getting transaction ID
 func TestTransactionGetID(t *testing.T) {
-	tests := []uint64{1, 100, 999999, 18446744073709551615} // Max uint64
+	tests := []uint64{1, 100, 999999, 18446744073709551615}
 
 	for _, id := range tests {
 		txn := NewTransaction(id, READ_COMMITTED)
@@ -229,30 +199,24 @@ func TestTransactionGetID(t *testing.T) {
 	}
 }
 
-// TestTransactionMultipleStateTransitions tests multiple state changes
 func TestTransactionMultipleStateTransitions(t *testing.T) {
 	txn := NewTransaction(1, SERIALIZABLE)
 
-	// ACTIVE -> ABORTED
 	txn.Abort()
 	if txn.GetState() != ABORTED {
 		t.Errorf("expected ABORTED, got %v", txn.GetState())
 	}
 
-	// Can still get ID after abort
 	if txn.GetID() != 1 {
 		t.Error("txn ID should still be accessible after abort")
 	}
 }
 
-// TestTransactionRecordOperation tests recording operations
 func TestTransactionRecordOperation(t *testing.T) {
 	txn := NewTransaction(1, READ_COMMITTED)
 
-	// Create a page write operation
 	op := undo.NewPageWriteOp(1, 0, 0, []byte{1, 2, 3})
 
-	// Record it
 	err := txn.RecordOperation(op)
 	if err != nil {
 		t.Errorf("expected nil error, got %v", err)

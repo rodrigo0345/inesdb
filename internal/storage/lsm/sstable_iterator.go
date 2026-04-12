@@ -5,9 +5,9 @@ import "sort"
 type sstableIter struct {
 	keys       []string
 	vals       [][]byte
-	tombstones map[string]bool // Tombstone flags from SSTable
+	tombstones map[string]bool
 	pos        int
-	priority   int // index in the allTables slice; higher = newer
+	priority   int
 }
 
 func newSSTableIter(ss *SSTable, priority int) *sstableIter {
@@ -26,7 +26,7 @@ func newSSTableIter(ss *SSTable, priority int) *sstableIter {
 		keys:       keys,
 		vals:       vals,
 		tombstones: ss.tombstones,
-		pos:        -1, // next() moves to 0
+		pos:        -1,
 		priority:   priority,
 	}
 }

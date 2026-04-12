@@ -7,7 +7,6 @@ import (
 	"github.com/rodrigo0345/omag/internal/storage/schema"
 )
 
-// Integration tests verify ACID compliance across complete transaction flows
 
 func TestACIDAtomicity_InsertRollback(t *testing.T) {
 	tableSchema := schema.NewTableSchema("users", "id")

@@ -10,15 +10,12 @@ import (
 	"github.com/rodrigo0345/omag/internal/txn/undo"
 )
 
-// RollbackManager provides utilities for safe transaction rollback
-// Coordinates between isolation strategies and undo operations
 type RollbackManager struct {
 	bufferMgr buffer.IBufferPoolManager
-	nextOpID  uint64 // Atomic counter for operation IDs
+	nextOpID  uint64
 	mu        sync.RWMutex
 }
 
-// NewRollbackManager creates a manager for handling transaction rollbacks
 func NewRollbackManager(bufferMgr buffer.IBufferPoolManager) *RollbackManager {
 	return &RollbackManager{
 		bufferMgr: bufferMgr,
@@ -26,8 +23,6 @@ func NewRollbackManager(bufferMgr buffer.IBufferPoolManager) *RollbackManager {
 	}
 }
 
-// RecordPageWrite creates and records a page write operation
-// Returns the operation ID for reference
 func (rm *RollbackManager) RecordPageWrite(
 	txn *Transaction,
 	pageID page.ResourcePageID,
@@ -45,8 +40,6 @@ func (rm *RollbackManager) RecordPageWrite(
 	return opID, nil
 }
 
-// RollbackTransaction performs complete rollback of a transaction
-// Executes index cleanup callbacks and calls optional before/after callbacks
 func (rm *RollbackManager) RollbackTransaction(
 	txn *Transaction,
 	onBeforeRollback func() error,
@@ -60,24 +53,20 @@ func (rm *RollbackManager) RollbackTransaction(
 		return fmt.Errorf("cannot rollback committed transaction %d", txn.GetID())
 	}
 
-	// Execute pre-rollback callback
 	if onBeforeRollback != nil {
 		if err := onBeforeRollback(); err != nil {
 			return fmt.Errorf("pre-rollback callback failed: %w", err)
 		}
 	}
 
-	// Execute index cleanup callbacks
 	if err := txn.ExecuteCleanupCallbacks(); err != nil {
 		return fmt.Errorf("cleanup failed for txn %d: %w", txn.GetID(), err)
 	}
 
-	// Perform undo log rollback
 	if err := txn.Rollback(rm.bufferMgr); err != nil {
 		return fmt.Errorf("rollback of txn %d failed: %w", txn.GetID(), err)
 	}
 
-	// Execute post-rollback callback
 	if onAfterRollback != nil {
 		if err := onAfterRollback(); err != nil {
 			return fmt.Errorf("post-rollback callback failed: %w", err)
@@ -87,12 +76,10 @@ func (rm *RollbackManager) RollbackTransaction(
 	return nil
 }
 
-// HasOperations returns true if the transaction has recorded any operations
 func (rm *RollbackManager) HasOperations(txn *Transaction) bool {
 	return txn.GetUndoLog().GetOperationCount() > 0
 }
 
-// RollbackToSavePoint performs partial rollback to a savepoint
 func (rm *RollbackManager) RollbackToSavePoint(txn *Transaction, savePoint int) error {
 	if txn == nil {
 		return fmt.Errorf("cannot rollback nil transaction")
@@ -105,7 +92,6 @@ func (rm *RollbackManager) RollbackToSavePoint(txn *Transaction, savePoint int) 
 	return txn.RollbackToPoint(savePoint, rm.bufferMgr)
 }
 
-// GetOperationCount returns the number of operations recorded for a transaction
 func (rm *RollbackManager) GetOperationCount(txn *Transaction) int {
 	if txn == nil {
 		return 0
@@ -113,8 +99,6 @@ func (rm *RollbackManager) GetOperationCount(txn *Transaction) int {
 	return txn.GetUndoLog().GetOperationCount()
 }
 
-// RegisterIndexCleanup registers an index cleanup callback for a transaction
-// This is called by write handlers to ensure indexes are cleaned up on rollback
 func (rm *RollbackManager) RegisterIndexCleanup(txn *Transaction, cleanup func() error) {
 	if txn != nil && cleanup != nil {
 		txn.RegisterCleanupCallback(cleanup)

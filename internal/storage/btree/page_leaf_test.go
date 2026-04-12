@@ -18,7 +18,6 @@ func TestLeafPage_Initialization(t *testing.T) {
 		t.Fatalf("expected 0 cells in new leaf, got %d", leaf.CellCount())
 	}
 
-	// The free space pointer should start at the very end of the page
 	if leaf.FreeSpacePointer() != uint16(pageSize) {
 		t.Fatalf("expected FreeSpacePointer %d, got %d", pageSize, leaf.FreeSpacePointer())
 	}
@@ -32,9 +31,8 @@ func TestLeafPage_SettersAndGetters(t *testing.T) {
 	pageSize := uint32(4096)
 	leaf := NewLeafPage(pageSize)
 
-	// Simulate adding 5 items and updating the sibling pointer
 	leaf.SetCellCount(5)
-	leaf.SetFreeSpacePointer(3000) // Space shrank because we added data
+	leaf.SetFreeSpacePointer(3000)
 	leaf.SetRightSibling(99)
 
 	if leaf.CellCount() != 5 {
@@ -52,19 +50,13 @@ func TestLeafPage_SlotArrayMath(t *testing.T) {
 	pageSize := uint32(4096)
 	leaf := NewLeafPage(pageSize)
 
-	// Insert function does not exist yet, so we will manually hack
-	// the byte array to simulate adding a slot to the Slot Array.
 
-	// Let's pretend Cell 0's data is written at byte 4000
 	cell0Offset := uint16(4000)
 
-	// We calculate where Slot 0 lives: HeaderSize (14) + (0 * 2) = Byte 14
 	slot0Position := LeafHeaderSize + (0 * SlotSize)
 
-	// Manually write the cell offset into the slot array
 	binary.LittleEndian.PutUint16(leaf.data[slot0Position:], cell0Offset)
 
-	// Now we test if our GetCellOffset function correctly finds it
 	retrievedOffset := leaf.GetCellOffset(0)
 
 	if retrievedOffset != cell0Offset {
@@ -79,13 +71,10 @@ func TestLeafPage_WriteAndGetCell(t *testing.T) {
 	key := []byte("hello")
 	value := []byte("world")
 
-	// Calculate expected size: 6 (Cell Header) + 5 (key length) + 5 (value length) = 16 bytes
 	expectedSize := uint16(CellHeaderSize + len(key) + len(value))
 
-	// Pick an arbitrary offset near the end of the page
 	offset := uint16(4000)
 
-	// 1. Test Write
 	writtenSize := leaf.WriteCell(offset, key, value)
 	if writtenSize != expectedSize {
 		t.Fatalf("expected written size %d, got %d", expectedSize, writtenSize)
@@ -148,8 +137,6 @@ func BenchmarkLeafPage_WriteCell(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	// b.N is dynamically injected by Go. It will run this loop
-	// until it gets a statistically significant measurement.
 	for i := 0; i < b.N; i++ {
 		leaf.WriteCell(offset, key, value)
 	}
@@ -163,15 +150,12 @@ func BenchmarkLeafPage_GetCell(b *testing.B) {
 	value := []byte("this_is_some_user_data_payload")
 	offset := uint16(100)
 
-	// Write it once before the benchmark starts
 	leaf.WriteCell(offset, key, value)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		// We assign to a blank identifier to ensure the compiler
-		// doesn't optimize the function call away completely.
 		_ = leaf.GetCell(offset)
 	}
 }
@@ -185,7 +169,6 @@ func TestLeafPage_RemoveAndVacuum(t *testing.T) {
 	key2 := []byte("B_key")
 	val2 := []byte("B_value")
 
-	// Insert both
 	leaf.Insert(key1, val1)
 	leaf.Insert(key2, val2)
 
@@ -193,10 +176,8 @@ func TestLeafPage_RemoveAndVacuum(t *testing.T) {
 		t.Fatalf("expected 2 cells, got %d", leaf.CellCount())
 	}
 
-	// Record the free space pointer before deletion
 	spaceBeforeDelete := leaf.FreeSpacePointer()
 
-	// Remove the first key
 	err := leaf.Remove(key1)
 	if err != nil {
 		t.Fatalf("failed to remove key: %v", err)
@@ -206,26 +187,21 @@ func TestLeafPage_RemoveAndVacuum(t *testing.T) {
 		t.Fatalf("expected 1 cell after removal, got %d", leaf.CellCount())
 	}
 
-	// Verify the remaining key is correct (it should now be at slot 0)
 	cell := leaf.GetCell(leaf.GetCellOffset(0))
 	if string(cell.Key) != "B_key" {
 		t.Fatalf("expected remaining key to be B_key, got %s", cell.Key)
 	}
 
-	// Verify fragmentation: Free space pointer should NOT have moved yet
 	if leaf.FreeSpacePointer() != spaceBeforeDelete {
 		t.Fatalf("free space pointer shifted prematurely")
 	}
 
-	// Vacuum the page
 	leaf.Vacuum()
 
-	// Verify space was reclaimed. Free space pointer should now be closer to 4096.
 	if leaf.FreeSpacePointer() <= spaceBeforeDelete {
 		t.Fatalf("vacuum failed to reclaim space. pointer is %d", leaf.FreeSpacePointer())
 	}
 
-	// Ensure the remaining record is still perfectly intact after vacuum
 	cellAfterVacuum := leaf.GetCell(leaf.GetCellOffset(0))
 	if string(cellAfterVacuum.Key) != "B_key" {
 		t.Fatalf("data corrupted after vacuum, got %s", cellAfterVacuum.Key)
@@ -236,18 +212,13 @@ func TestLeafPage_Insert_PageFull(t *testing.T) {
 	pageSize := uint32(4096)
 	leaf := NewLeafPage(pageSize)
 
-	// Create a massive payload that takes up almost the whole page.
-	// We make a 4000-byte slice filled with zeros.
 	massiveValue := make([]byte, 4050)
 
-	// First insert should succeed
 	err := leaf.Insert([]byte("giant_key"), massiveValue)
 	if err != nil {
 		t.Fatalf("failed to insert initial massive payload: %v", err)
 	}
 
-	// Now try to insert a tiny payload.
-	// The page only has ~70 bytes left, so this should fail.
 	err = leaf.Insert([]byte("tiny_key"), []byte("tiny_value"))
 
 	if err == nil {
@@ -262,7 +233,6 @@ func TestLeafPage_Insert_VacuumLimits(t *testing.T) {
 	pageSize := uint32(4096)
 	leaf := NewLeafPage(pageSize)
 
-	// insert two large payloads (2000 bytes and 1000 bytes)
 	val1 := make([]byte, 2000)
 	leaf.Insert([]byte("key1"), val1)
 
@@ -276,9 +246,6 @@ func TestLeafPage_Insert_VacuumLimits(t *testing.T) {
 		t.Fatalf("expected insert to succeed by automatically vacuuming, but failed: %v", err)
 	}
 
-	// the page has a 1000-byte and 2500-byte payload active (~3500 bytes used).
-	// try to squeeze another 1000 bytes in.
-	// if Insert calls Vacuum again, it shouldn't be enough. It must fail safely.
 	val4 := make([]byte, 1000)
 	err = leaf.Insert([]byte("key4"), val4)
 
@@ -291,8 +258,6 @@ func TestLeafPage_Get(t *testing.T) {
 	pageSize := uint32(4096)
 	leaf := NewLeafPage(pageSize)
 
-	// Insert some data out of alphabetical order
-	// The internal logic should sort them automatically via the slot array
 	leaf.Insert([]byte("zebra"), []byte("stripes"))
 	leaf.Insert([]byte("apple"), []byte("red"))
 	leaf.Insert([]byte("mango"), []byte("yellow"))

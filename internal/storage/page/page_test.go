@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// TestNewPage tests page creation
 func TestNewPage(t *testing.T) {
 	pageID := ResourcePageID(1)
 	page := NewResourcePage(pageID)
@@ -25,11 +24,9 @@ func TestNewPage(t *testing.T) {
 	}
 }
 
-// TestPage_RLock_RUnlock tests read lock operations
 func TestPage_RLock_RUnlock(t *testing.T) {
 	page := NewResourcePage(1)
 
-	// Multiple readers should be able to acquire read locks simultaneously
 	var wg sync.WaitGroup
 	errors := make(chan error, 3)
 
@@ -39,7 +36,6 @@ func TestPage_RLock_RUnlock(t *testing.T) {
 			defer wg.Done()
 			page.RLock()
 			defer page.RUnlock()
-			// Simulate some read operation
 			_ = page.GetID()
 		}()
 	}
@@ -47,13 +43,11 @@ func TestPage_RLock_RUnlock(t *testing.T) {
 	wg.Wait()
 	close(errors)
 
-	// Should complete without deadlock
 	if len(errors) > 0 {
 		t.Fatalf("expected no errors, got %v", <-errors)
 	}
 }
 
-// TestPage_WLock_WUnlock tests write lock operations
 func TestPage_WLock_WUnlock(t *testing.T) {
 	page := NewResourcePage(2)
 
@@ -66,11 +60,9 @@ func TestPage_WLock_WUnlock(t *testing.T) {
 	}
 }
 
-// TestPage_ExclusiveWriteLock tests that write lock works correctly
 func TestPage_ExclusiveWriteLock(t *testing.T) {
 	page := NewResourcePage(3)
 
-	// Simple test: acquire and release write lock
 	page.WLock()
 	page.SetDirty(true)
 	page.WUnlock()
@@ -80,7 +72,6 @@ func TestPage_ExclusiveWriteLock(t *testing.T) {
 	}
 }
 
-// TestPage_GetData tests data access
 func TestPage_GetData(t *testing.T) {
 	page := NewResourcePage(4)
 	data := page.GetData()
@@ -89,7 +80,6 @@ func TestPage_GetData(t *testing.T) {
 		t.Fatalf("expected data size %d, got %d", PageSize, len(data))
 	}
 
-	// Modify data
 	data[0] = 42
 	retrievedData := page.GetData()
 	if retrievedData[0] != 42 {
@@ -97,7 +87,6 @@ func TestPage_GetData(t *testing.T) {
 	}
 }
 
-// TestPage_PinCount tests pin count operations
 func TestPage_PinCount(t *testing.T) {
 	page := NewResourcePage(5)
 
@@ -117,7 +106,6 @@ func TestPage_PinCount(t *testing.T) {
 	}
 }
 
-// TestPage_DirtyFlag tests dirty flag operations
 func TestPage_DirtyFlag(t *testing.T) {
 	page := NewResourcePage(6)
 
@@ -136,25 +124,21 @@ func TestPage_DirtyFlag(t *testing.T) {
 	}
 }
 
-// TestPage_LSN tests LSN (Log Sequence Number) operations
 func TestPage_LSN(t *testing.T) {
 	page := NewResourcePage(7)
 
 	switch v := page.(type) {
 	case *ResourcePage:
 
-		// Initial LSN should be 0
 		if v.GetLSN() != 0 {
 			t.Fatalf("expected initial LSN 0, got %d", v.GetLSN())
 		}
 
-		// Set LSN
 		v.SetLSN(12345)
 		if v.GetLSN() != 12345 {
 			t.Fatalf("expected LSN 12345, got %d", v.GetLSN())
 		}
 
-		// Update LSN
 		v.SetLSN(67890)
 		if v.GetLSN() != 67890 {
 			t.Fatalf("expected LSN 67890, got %d", v.GetLSN())
@@ -166,25 +150,21 @@ func TestPage_LSN(t *testing.T) {
 
 }
 
-// TestPage_ConcurrentReadAndWrite tests concurrent read/write operations
 func TestPage_ConcurrentReadAndWrite(t *testing.T) {
 	page := NewResourcePage(8)
 	page.SetDirty(false)
 
-	// Write some data
 	data := page.GetData()
 	data[0] = 100
 
 	var wg sync.WaitGroup
 
-	// Spawn multiple readers
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			page.RLock()
 			defer page.RUnlock()
-			// Read the data
 			if page.GetData()[0] != 100 {
 				t.Errorf("expected data[0] = 100, got %d", page.GetData()[0])
 			}
@@ -194,11 +174,9 @@ func TestPage_ConcurrentReadAndWrite(t *testing.T) {
 	wg.Wait()
 }
 
-// TestPage_MultipleStateChanges tests multiple state changes
 func TestPage_MultipleStateChanges(t *testing.T) {
 	page := NewResourcePage(9)
 
-	// Sequence of operations
 	page.SetPinCount(1)
 	page.SetDirty(true)
 
@@ -219,7 +197,6 @@ func TestPage_MultipleStateChanges(t *testing.T) {
 		t.Fatalf("expected LSN 555, got %d", page.GetLSN())
 	}
 
-	// Reset
 	page.SetPinCount(0)
 	page.SetDirty(false)
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 )
 
-// DataType represents the data type of a column
 type DataType string
 
 const (
@@ -16,15 +15,12 @@ const (
 	DataTypeNullable DataType = "nullable"
 )
 
-// Column represents a column in a table
 type Column struct {
 	Name     string
 	DataType DataType
 	Nullable bool
-	// Optional: default value, constraints, etc.
 }
 
-// IndexType represents the type of index
 type IndexType string
 
 const (
@@ -33,28 +29,24 @@ const (
 	IndexTypeUnique    IndexType = "unique"
 )
 
-// Index represents an index on one or more columns
 type Index struct {
 	Name     string
 	Type     IndexType
-	Columns  []string // Column names included in this index
+	Columns  []string
 	IsUnique bool
-	IsSparse bool // For partial indexes
+	IsSparse bool
 }
 
-// TableSchema represents the complete schema of a table
 type TableSchema struct {
 	Name       string
-	Columns    map[string]*Column // Column name -> Column
-	ColumnList []string           // Ordered list of column names for iteration
-	PrimaryKey string             // Primary key column name
-	Indexes    map[string]*Index  // Index name -> Index
-	// Metadata
+	Columns    map[string]*Column
+	ColumnList []string
+	PrimaryKey string
+	Indexes    map[string]*Index
 	CreatedAt  int64
 	ModifiedAt int64
 }
 
-// NewTableSchema creates a new table schema
 func NewTableSchema(name string, primaryKey string) *TableSchema {
 	return &TableSchema{
 		Name:       name,
@@ -67,7 +59,6 @@ func NewTableSchema(name string, primaryKey string) *TableSchema {
 	}
 }
 
-// AddColumn adds a column to the table schema
 func (ts *TableSchema) AddColumn(name string, dataType DataType, nullable bool) error {
 	if _, exists := ts.Columns[name]; exists {
 		return fmt.Errorf("column %q already exists", name)
@@ -84,20 +75,17 @@ func (ts *TableSchema) AddColumn(name string, dataType DataType, nullable bool) 
 	return nil
 }
 
-// AddIndex adds an index to the table schema
 func (ts *TableSchema) AddIndex(name string, indexType IndexType, columns []string, isUnique bool) error {
 	if _, exists := ts.Indexes[name]; exists {
 		return fmt.Errorf("index %q already exists", name)
 	}
 
-	// Validate that all columns exist
 	for _, colName := range columns {
 		if _, exists := ts.Columns[colName]; !exists {
 			return fmt.Errorf("column %q does not exist", colName)
 		}
 	}
 
-	// Validate primary key index
 	if indexType == IndexTypePrimary {
 		if len(columns) != 1 || columns[0] != ts.PrimaryKey {
 			return fmt.Errorf("primary key index must contain exactly the primary key column %q", ts.PrimaryKey)
@@ -119,7 +107,6 @@ func (ts *TableSchema) AddIndex(name string, indexType IndexType, columns []stri
 	return nil
 }
 
-// GetColumn returns a column by name
 func (ts *TableSchema) GetColumn(name string) (*Column, error) {
 	if col, exists := ts.Columns[name]; exists {
 		return col, nil
@@ -127,7 +114,6 @@ func (ts *TableSchema) GetColumn(name string) (*Column, error) {
 	return nil, fmt.Errorf("column %q not found", name)
 }
 
-// GetIndex returns an index by name
 func (ts *TableSchema) GetIndex(name string) (*Index, error) {
 	if idx, exists := ts.Indexes[name]; exists {
 		return idx, nil
@@ -135,7 +121,6 @@ func (ts *TableSchema) GetIndex(name string) (*Index, error) {
 	return nil, fmt.Errorf("index %q not found", name)
 }
 
-// GetIndexesForColumn returns all indexes that include the given column
 func (ts *TableSchema) GetIndexesForColumn(columnName string) []*Index {
 	var indexes []*Index
 	for _, idx := range ts.Indexes {
@@ -149,14 +134,12 @@ func (ts *TableSchema) GetIndexesForColumn(columnName string) []*Index {
 	return indexes
 }
 
-// HasPrimaryKey checks if a primary key index exists
 func (ts *TableSchema) HasPrimaryKey() bool {
 	pkIndexName := ts.PrimaryKey + "_pk"
 	_, exists := ts.Indexes[pkIndexName]
 	return exists
 }
 
-// Validate checks if the schema is valid
 func (ts *TableSchema) Validate() error {
 	if ts.Name == "" {
 		return fmt.Errorf("table name cannot be empty")
@@ -177,7 +160,6 @@ func (ts *TableSchema) Validate() error {
 	return nil
 }
 
-// ColumnDataType is a helper to get column data type
 func (ts *TableSchema) ColumnDataType(columnName string) (DataType, error) {
 	col, err := ts.GetColumn(columnName)
 	if err != nil {

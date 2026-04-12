@@ -7,9 +7,6 @@ import (
 	"github.com/rodrigo0345/omag/internal/storage/page"
 )
 
-// ============================================================================
-// MOCK IMPLEMENTATIONS FOR B+TREE TESTING
-// ============================================================================
 
 type mockDiskManager struct {
 	pages map[page.ResourcePageID][]byte

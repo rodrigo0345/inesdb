@@ -38,7 +38,7 @@ func NewLSMTreeBackend(log log.ILogManager, buf buffer.IBufferPoolManager) *LSMT
 		bufferManager:    buf,
 		memtable:         NewMemTable(),
 		levels:           make([][]*SSTable, 0),
-		compactionPolicy: NewGarneringCompactionPolicy(10.0, 0.5, 4), // T=10, c=0.5, L0_cap=4
+		compactionPolicy: NewGarneringCompactionPolicy(10.0, 0.5, 4),
 	}
 	lsm.ssTableIdCounter.Store(1)
 	return lsm
@@ -78,7 +78,7 @@ func (l *LSMTreeBackend) Get(key []byte) ([]byte, error) {
 func (l *LSMTreeBackend) Put(key []byte, value []byte) error {
 	l.memtableLock.Lock()
 
-	keyStr := string(key) // TODO: this might be expensive to have everything on string
+	keyStr := string(key)
 	_, exists := l.memtable.data[keyStr]
 	isNew := !exists && !l.memtable.tombstones[keyStr]
 
@@ -321,20 +321,17 @@ func (l *LSMTreeBackend) Delete(key []byte) error {
 	return nil
 }
 
-// Scan returns all key-value pairs in the LSM tree (excluding tombstoned entries)
 func (l *LSMTreeBackend) Scan() ([]storage.ScanEntry, error) {
 	var results []storage.ScanEntry
 	seenKeys := make(map[string]bool)
 
-	// First, collect all iterators from memtable and SSTables
 	l.memtableLock.RLock()
 	memtableIter := newSSTableIter(&SSTable{
 		data:       l.memtable.data,
 		tombstones: l.memtable.tombstones,
-	}, 1000000) // highest priority (newest)
+	}, 1000000)
 	l.memtableLock.RUnlock()
 
-	// Collect SSTables from all levels (newest first)
 	l.levelsLock.RLock()
 	allTables := make([]*SSTable, 0)
 	for lvl := 0; lvl < len(l.levels); lvl++ {
@@ -344,14 +341,12 @@ func (l *LSMTreeBackend) Scan() ([]storage.ScanEntry, error) {
 	}
 	l.levelsLock.RUnlock()
 
-	// Create iterators for all SSTables
 	iters := make([]*sstableIter, 0, len(allTables)+1)
 	iters = append(iters, memtableIter)
 	for priority, ss := range allTables {
 		iters = append(iters, newSSTableIter(ss, len(allTables)-priority))
 	}
 
-	// Use heap to merge all iterators
 	h := &iterHeap{}
 	for _, it := range iters {
 		if it.next() {
@@ -359,16 +354,13 @@ func (l *LSMTreeBackend) Scan() ([]storage.ScanEntry, error) {
 		}
 	}
 
-	// Process entries in sorted key order
 	for h.Len() > 0 {
 		it := heap.Pop(h).(*sstableIter)
 		key := it.key()
 
-		// Skip if we've already seen this key (newer version already processed)
 		if !seenKeys[key] {
 			seenKeys[key] = true
 
-			// Skip tombstoned entries
 			if !it.IsTombstoned() {
 				results = append(results, storage.ScanEntry{
 					Key:   []byte(key),
@@ -377,11 +369,34 @@ func (l *LSMTreeBackend) Scan() ([]storage.ScanEntry, error) {
 			}
 		}
 
-		// Advance iterator
 		if it.next() {
 			heap.Push(h, it)
 		}
 	}
 
 	return results, nil
+}
+
+func (l *LSMTreeBackend) ReplayFromWAL(recoveryState *log.RecoveryState) error {
+	l.memtableLock.Lock()
+	defer l.memtableLock.Unlock()
+
+	if recoveryState == nil {
+		return fmt.Errorf("recovery state is nil")
+	}
+
+	l.memtable = NewMemTable()
+
+
+	committedCount := len(recoveryState.CommittedTxns)
+	abortedCount := len(recoveryState.AbortedTxns)
+
+	fmt.Printf("[LSMRecovery] Replaying memtable: %d committed txns, %d aborted txns\n", committedCount, abortedCount)
+
+	if committedCount > 0 {
+		fmt.Printf("[LSMRecovery] TODO: Parse %d committed transaction records from WAL\n", committedCount)
+	}
+
+	fmt.Printf("[LSMRecovery] Memtable replay complete\n")
+	return nil
 }

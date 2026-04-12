@@ -57,11 +57,9 @@ func TestInternalPage_Search(t *testing.T) {
 	page := NewInternalPage(4096)
 	page.SetRightmostPointer(99)
 
-	// Setup routing keys
 	page.Insert([]byte("apple"), 10)
 	page.Insert([]byte("cherry"), 20)
 	page.Insert([]byte("banana"), 15)
-	// Sorted order: [apple: 10], [banana: 15], [cherry: 20]
 
 	tests := []struct {
 		searchKey       []byte
@@ -85,11 +83,6 @@ func TestInternalPage_Search(t *testing.T) {
 }
 
 func TestInternalPage_Insert_PageFull(t *testing.T) {
-	// 128 bytes total. Header is 14 bytes.
-	// Each cell with a 1-byte key: 10 (InternalCellHeaderSize) + 1 (key) = 11 bytes.
-	// Slot array overhead per cell: 2 bytes.
-	// Total per insertion: 13 bytes.
-	// Capacity: (128 - 14) / 13 = 8 insertions max.
 	page := NewInternalPage(128)
 
 	for i := 0; i < 8; i++ {
@@ -114,25 +107,19 @@ func TestInternalPage_Vacuum(t *testing.T) {
 
 	expectedFreeSpace := page.FreeSpacePointer()
 
-	// Artificially simulate fragmentation by shifting the FreeSpacePointer downward
-	// without actually adding a cell.
 	fragmentedSpace := expectedFreeSpace - 50
 	page.SetFreeSpacePointer(fragmentedSpace)
 
-	// Validate fragmentation took effect
 	if page.FreeSpacePointer() != fragmentedSpace {
 		t.Fatalf("failed to artificially fragment page")
 	}
 
 	page.Vacuum()
 
-	// Vacuum should restore the free space pointer to exactly where it was
-	// before the artificial fragmentation.
 	if page.FreeSpacePointer() != expectedFreeSpace {
 		t.Errorf("Vacuum failed to reclaim space. Expected FreeSpacePointer %d, got %d", expectedFreeSpace, page.FreeSpacePointer())
 	}
 
-	// Ensure data integrity post-vacuum
 	if page.CellCount() != 2 {
 		t.Fatalf("expected 2 cells after vacuum, got %d", page.CellCount())
 	}
@@ -148,14 +135,12 @@ func TestInternalPage_Vacuum(t *testing.T) {
 	}
 }
 
-// Validates median key promotion and RightmostPointer shifts for Internal Nodes.
 func TestInternalPage_Split(t *testing.T) {
 	pageSize := uint32(4096)
 	page := NewInternalPage(pageSize)
 	page.SetRightmostPointer(99)
 
 	keys := []string{"A", "B", "C", "D", "E", "F"}
-	// Insert keys with sequential child pointers 1 through 6
 	for i, k := range keys {
 		err := page.Insert([]byte(k), uint64(i+1))
 		if err != nil {
@@ -165,29 +150,23 @@ func TestInternalPage_Split(t *testing.T) {
 
 	newPage := NewInternalPage(pageSize)
 
-	// InternalPage.Split takes 1 argument and returns the promoted key
 	promotedKey := page.Split(newPage)
 
-	// Total 6 cells. Mid index is 3 (Key "D", Child 4).
 	if string(promotedKey) != "D" {
 		t.Fatalf("expected promoted key 'D', got '%s'", promotedKey)
 	}
 
-	// Left page retains cells 0, 1, 2 ("A", "B", "C")
 	if page.CellCount() != 3 {
 		t.Fatalf("expected left page 3 cells, got %d", page.CellCount())
 	}
-	// Right page receives cells 4, 5 ("E", "F")
 	if newPage.CellCount() != 2 {
 		t.Fatalf("expected right page 2 cells, got %d", newPage.CellCount())
 	}
 
-	// Left node's new rightmost pointer becomes the left child of the promoted key (Child 4)
 	if page.RightmostPointer() != 4 {
 		t.Fatalf("expected left rightmost pointer 4, got %d", page.RightmostPointer())
 	}
 
-	// Right node's new rightmost pointer inherits the original rightmost pointer (99)
 	if newPage.RightmostPointer() != 99 {
 		t.Fatalf("expected right rightmost pointer 99, got %d", newPage.RightmostPointer())
 	}

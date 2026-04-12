@@ -13,7 +13,7 @@ type MVCCWriteHandler struct {
 	storageEngine   storage.IStorageEngine
 	logManager      log.ILogManager
 	bufferManager   buffer.IBufferPoolManager
-	rollbackManager *RollbackManager // For registering cleanup callbacks
+	rollbackManager *RollbackManager
 	indexManager    *schema.SecondaryIndexManager
 	tableSchema     *schema.TableSchema
 }
@@ -48,22 +48,17 @@ func (mh *MVCCWriteHandler) HandleWrite(txn *Transaction, writeOp WriteOperation
 		}
 	}
 
-	// Handle index maintenance for DELETE
 	if writeOp.IsDelete && mh.indexManager != nil && mh.tableSchema != nil && beforeImage != nil {
-		// Extract indexed column values from before-image
 		indexValues, err := ExtractIndexValues(mh.tableSchema, beforeImage)
 		if err != nil {
 			return fmt.Errorf("failed to extract index values before delete: %w", err)
 		}
 
-		// Remove from all indexes
 		for indexName, indexValue := range indexValues {
 			if err := mh.indexManager.RemoveFromIndex(indexName, indexValue, writeOp.PrimaryKey); err != nil {
 				return fmt.Errorf("failed to remove from index %q: %w", indexName, err)
 			}
 
-			// Register cleanup to restore index entry if transaction rolls back
-			// Capture values for closure
 			capturedIndexName := indexName
 			capturedIndexValue := indexValue
 			capturedPrimaryKey := writeOp.PrimaryKey
@@ -75,7 +70,6 @@ func (mh *MVCCWriteHandler) HandleWrite(txn *Transaction, writeOp WriteOperation
 		}
 	}
 
-	// Perform storage operation
 	if writeOp.IsDelete {
 		if err := mh.storageEngine.Delete(writeOp.Key); err != nil {
 			return fmt.Errorf("storage delete failed: %w", err)
@@ -85,22 +79,17 @@ func (mh *MVCCWriteHandler) HandleWrite(txn *Transaction, writeOp WriteOperation
 			return fmt.Errorf("storage put failed: %w", err)
 		}
 
-		// Handle index maintenance for INSERT/UPDATE
 		if mh.indexManager != nil && mh.tableSchema != nil {
-			// Extract indexed column values from new value
 			indexValues, err := ExtractIndexValues(mh.tableSchema, writeOp.Value)
 			if err != nil {
 				return fmt.Errorf("failed to extract index values: %w", err)
 			}
 
-			// Add to all indexes
 			for indexName, indexValue := range indexValues {
 				if err := mh.indexManager.AddToIndex(indexName, indexValue, writeOp.PrimaryKey); err != nil {
 					return fmt.Errorf("failed to add to index %q: %w", indexName, err)
 				}
 
-				// Register cleanup to remove index entry if transaction rolls back
-				// Capture values for closure
 				capturedIndexName := indexName
 				capturedIndexValue := indexValue
 				capturedPrimaryKey := writeOp.PrimaryKey
@@ -116,7 +105,6 @@ func (mh *MVCCWriteHandler) HandleWrite(txn *Transaction, writeOp WriteOperation
 	return nil
 }
 
-// SetIndexContext sets the index manager and schema for automatic index maintenance
 func (mh *MVCCWriteHandler) SetIndexContext(tableSchema *schema.TableSchema, indexMgr *schema.SecondaryIndexManager) error {
 	mh.tableSchema = tableSchema
 	mh.indexManager = indexMgr

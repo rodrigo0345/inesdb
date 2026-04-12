@@ -15,15 +15,15 @@ var (
 )
 
 const (
-	BatchSizeThreshold = 512 * 1024 // 512KB
+	BatchSizeThreshold = 512 * 1024
 	FlushInterval      = 2 * time.Second
 )
 
 type writeRequest struct {
 	pageID   page.ResourcePageID
 	pageData []byte
-	done     chan struct{} // Used for synchronization in Flush
-	isMarker bool          // True if this is a flush marker, not a real write
+	done     chan struct{}
+	isMarker bool
 }
 
 type DiskManager struct {
@@ -33,7 +33,7 @@ type DiskManager struct {
 	writeQueue chan writeRequest
 	wg         sync.WaitGroup
 	quit       chan struct{}
-	closed     bool // Track if already closed
+	closed     bool
 }
 
 func NewDiskManager(dbPath string) (*DiskManager, error) {
@@ -50,7 +50,7 @@ func NewDiskManager(dbPath string) (*DiskManager, error) {
 	dm := &DiskManager{
 		dbFile:     file,
 		nextPage:   page.ResourcePageID(stat.Size() / int64(page.PageSize)),
-		writeQueue: make(chan writeRequest, 2048), // Larger queue for batching
+		writeQueue: make(chan writeRequest, 2048),
 		quit:       make(chan struct{}),
 	}
 
@@ -63,30 +63,23 @@ func NewDiskManager(dbPath string) (*DiskManager, error) {
 func (dm *DiskManager) runBatchWorker() {
 	defer dm.wg.Done()
 
-	// Internal buffer to hold pages before flushing
 	var buffer []writeRequest
 	var currentBufferSize int
 
-	// Timer for the 2-second interval
 	ticker := time.NewTicker(FlushInterval)
 	defer ticker.Stop()
 
-	// Helper function to execute the batch write
 	flush := func() {
 		if len(buffer) == 0 {
 			return
 		}
 
-		// TODO: sort the buffer by PageID here
-		// to make the disk I/O more sequential (LBA ordering)
 		var doneChans []chan struct{}
 		for _, req := range buffer {
-			// Skip writing for marker requests (used by Flush)
 			if !req.isMarker {
 				offset := int64(req.pageID) * int64(page.PageSize)
 				_, err := dm.dbFile.WriteAt(req.pageData, offset)
 				if err != nil {
-					// TODO: handle this condition
 					panic("error writing page:" + err.Error())
 				}
 			}
@@ -95,12 +88,10 @@ func (dm *DiskManager) runBatchWorker() {
 			}
 		}
 
-		// Signal all done channels
 		for _, ch := range doneChans {
 			close(ch)
 		}
 
-		// Reset tracking
 		buffer = nil
 		currentBufferSize = 0
 	}
@@ -109,21 +100,19 @@ func (dm *DiskManager) runBatchWorker() {
 		select {
 		case req, ok := <-dm.writeQueue:
 			if !ok {
-				flush() // Final flush on channel close
+				flush()
 				return
 			}
 
 			buffer = append(buffer, req)
 			currentBufferSize += len(req.pageData)
 
-			// Trigger 1: Size-based (512KB)
 			if currentBufferSize >= BatchSizeThreshold {
 				flush()
-				ticker.Reset(FlushInterval) // Reset timer after manual flush
+				ticker.Reset(FlushInterval)
 			}
 
 		case <-ticker.C:
-			// Trigger 2: Time-based (2 seconds)
 			flush()
 
 		case <-dm.quit:
@@ -133,7 +122,6 @@ func (dm *DiskManager) runBatchWorker() {
 	}
 }
 
-// WritePage validates size and queues the write
 func (dm *DiskManager) WritePage(pageID page.ResourcePageID, pageData []byte) error {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
@@ -146,25 +134,22 @@ func (dm *DiskManager) WritePage(pageID page.ResourcePageID, pageData []byte) er
 		return ErrDiskManagerClosed
 	}
 
-	// Validate page size
 	if len(pageData) != page.PageSize {
 		return errors.New("invalid page size")
 	}
 
-	// Still cloning to ensure memory safety while the page sits in the batch buffer
 	dataCopy := make([]byte, page.PageSize)
 	copy(dataCopy, pageData)
 
 	dm.writeQueue <- writeRequest{
 		pageID:   pageID,
 		pageData: dataCopy,
-		done:     nil, // Normal writes don't wait
+		done:     nil,
 	}
 
 	return nil
 }
 
-// ReadPage uses ReadAt to remain compatible with the stateless model
 func (dm *DiskManager) ReadPage(pageID page.ResourcePageID, pageData []byte) error {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
@@ -173,10 +158,8 @@ func (dm *DiskManager) ReadPage(pageID page.ResourcePageID, pageData []byte) err
 		return ErrDiskManagerClosed
 	}
 
-	// calculate the offset and read the page data directly into the provided pageData buffer
 	offset := int64(pageID) * int64(page.PageSize)
 
-	// read up until len(pageData)
 	_, err := dm.dbFile.ReadAt(pageData, offset)
 	if err != nil && err != io.EOF {
 		return err
@@ -220,7 +203,6 @@ func (dm *DiskManager) Close() error {
 	return nil
 }
 
-// GetFileSize returns the current size of the database file in bytes
 func (dm *DiskManager) GetFileSize() (int64, error) {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
@@ -237,7 +219,6 @@ func (dm *DiskManager) GetFileSize() (int64, error) {
 	return stat.Size(), nil
 }
 
-// Flush waits for all pending writes to be written to disk
 func (dm *DiskManager) Flush() error {
 	dm.mu.RLock()
 	if dm.dbFile == nil {
@@ -250,19 +231,16 @@ func (dm *DiskManager) Flush() error {
 	}
 	dm.mu.RUnlock()
 
-	// Send a marker write with a done channel to ensure all pending writes get flushed
 	done := make(chan struct{})
 	dm.writeQueue <- writeRequest{
 		pageID:   0,
-		pageData: make([]byte, page.PageSize), // Empty/dummy data
+		pageData: make([]byte, page.PageSize),
 		done:     done,
-		isMarker: true, // This is a flush marker, don't actually write it
+		isMarker: true,
 	}
 
-	// Wait for the marker to be processed
 	<-done
 
-	// Now sync to ensure data is on disk
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 	if dm.dbFile != nil {

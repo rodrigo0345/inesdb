@@ -14,23 +14,21 @@ var (
 	ErrInvalidPageID = errors.New("invalid page ID")
 )
 
-// ReplacerType specifies which page replacement algorithm to use
 type ReplacerType int
 
 const (
-	ReplacerLRU   ReplacerType = iota // Least Recently Used
-	ReplacerClock                     // Clock-sweep algorithm
+	ReplacerLRU   ReplacerType = iota
+	ReplacerClock
 )
 
-// WALFlusher defines the subset of WAL functionality the BPM needs
 type WALFlusher interface {
 	Flush(upToLSN uint64) error
 }
 
 type BufferPoolManager struct {
 	poolSize        int
-	frames          []page.IResourcePage                        // actual cache buffer with configurable replacement policy
-	pageTable       map[page.ResourcePageID]concurrency.FrameID // logical PageID to physical FrameID mapping
+	frames          []page.IResourcePage
+	pageTable       map[page.ResourcePageID]concurrency.FrameID
 	freeList        []concurrency.FrameID
 	diskManager     *DiskManager
 	replacerManager concurrency.IReplacer
@@ -43,7 +41,6 @@ func NewBufferPoolManager(poolSize int, diskManager *DiskManager) IBufferPoolMan
 	return NewBufferPoolManagerWithReplacer(poolSize, diskManager, defaultReplacerPolicy)
 }
 
-// NewBufferPoolManagerWithReplacer creates a buffer pool manager with a specified replacer algorithm
 func NewBufferPoolManagerWithReplacer(
 	poolSize int,
 	diskManager *DiskManager,
@@ -72,16 +69,12 @@ func (bpm *BufferPoolManager) SetWALManager(walMgr interface{}) {
 	bpm.walMgr = walMgr
 }
 
-// flushPageInternal handles the WAL protocol + Disk I/O sequence.
-// bpm.mu MUST be held when calling this.
 func (bpm *BufferPoolManager) flushPageInternal(page page.IResourcePage) error {
 
-	// if the page is not dirty, we can skip the flush
 	if !page.IsDirty() {
 		return nil
 	}
 
-	// make sure all WAL records up to pageLSN of this page are flushed before writing the page to disk
 	if bpm.walMgr != nil {
 		if flusher, ok := bpm.walMgr.(WALFlusher); ok {
 			if err := flusher.Flush(page.GetLSN()); err != nil {
@@ -90,7 +83,6 @@ func (bpm *BufferPoolManager) flushPageInternal(page page.IResourcePage) error {
 		}
 	}
 
-	// now that every change was appended to the wal, we can safely write the page to disk
 	if err := bpm.diskManager.WritePage(page.GetID(), page.GetData()); err != nil {
 		return err
 	}
@@ -99,11 +91,9 @@ func (bpm *BufferPoolManager) flushPageInternal(page page.IResourcePage) error {
 	return nil
 }
 
-// can be thought of as the "fetch page" operation
 func (bpm *BufferPoolManager) PinPage(pageID page.ResourcePageID) (page.IResourcePage, error) {
 	bpm.mu.Lock()
 
-	// if the page is already in the buffer pool, just pin and return it
 	if frameID, exists := bpm.pageTable[pageID]; exists {
 		frame := bpm.frames[frameID]
 		frame.SetPinCount(frame.GetPinCount() + 1)
@@ -121,7 +111,6 @@ func (bpm *BufferPoolManager) PinPage(pageID page.ResourcePageID) (page.IResourc
 	frame := bpm.frames[frameID]
 	frame.ReplacePage(pageID)
 
-	// fill the frame's data with the page content from disk
 	if err := bpm.diskManager.ReadPage(pageID, frame.GetData()); err != nil {
 		bpm.mu.Unlock()
 		return nil, err
@@ -217,29 +206,24 @@ func (bpm *BufferPoolManager) Close() error {
 	return bpm.diskManager.Close()
 }
 
-// getAvailableFrameIDLocked finds a free frame or evicts a victim using the WAL protocol.
 func (bpm *BufferPoolManager) getAvailableFrameIDLocked() (concurrency.FrameID, error) {
 
-	// check if there is already a free frame
 	if len(bpm.freeList) > 0 {
 		frameID := bpm.freeList[0]
 		bpm.freeList = bpm.freeList[1:]
 		return frameID, nil
 	}
 
-	// if not, we need to evict a victim frame, to create space for the new page
 	frameID, ok := bpm.replacerManager.Victim()
 	if !ok {
 		return 0, ErrBufferFull
 	}
 
-	// we get the victim page and flush it to disk in case it is dirty
 	victimPage := bpm.frames[frameID]
 	if err := bpm.flushPageInternal(victimPage); err != nil {
 		return 0, err
 	}
 
-	// now we can reuse the victim frame id for the new page, but first we need to remove the victim page from the page table
 	delete(bpm.pageTable, victimPage.GetID())
 	return frameID, nil
 }

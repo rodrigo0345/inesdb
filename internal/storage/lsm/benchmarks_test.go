@@ -86,12 +86,10 @@ func BenchmarkLSM_MixedReadWrite(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		if rng.Float64() < 0.7 {
-			// Read operation
 			keyID := rng.Intn(1000)
 			key := []byte(fmt.Sprintf("mixed_%010d", keyID))
 			lsm.Get(key)
 		} else {
-			// Write operation
 			keyID := rng.Intn(2000)
 			key := []byte(fmt.Sprintf("mixed_%010d", keyID))
 			value := []byte(fmt.Sprintf("value_%d", keyID))
@@ -104,7 +102,7 @@ func BenchmarkLSM_HotColdDistribution(b *testing.B) {
 	lsm := createTestLSM(&testing.T{})
 
 	totalKeys := 500
-	hotKeyCount := 100 // 20% are hot
+	hotKeyCount := 100
 	rng := rand.New(rand.NewSource(999))
 
 	for i := 0; i < totalKeys; i++ {
@@ -134,7 +132,7 @@ func BenchmarkLSM_HotColdDistribution(b *testing.B) {
 
 func BenchmarkLSM_LargeValues_1KB(b *testing.B) {
 	lsm := createTestLSM(&testing.T{})
-	largeValue := make([]byte, 1024) // 1KB
+	largeValue := make([]byte, 1024)
 	for i := range largeValue {
 		largeValue[i] = byte(i % 256)
 	}
@@ -150,7 +148,7 @@ func BenchmarkLSM_LargeValues_1KB(b *testing.B) {
 
 func BenchmarkLSM_LargeValues_10KB(b *testing.B) {
 	lsm := createTestLSM(&testing.T{})
-	largeValue := make([]byte, 10240) // 10KB
+	largeValue := make([]byte, 10240)
 	for i := range largeValue {
 		largeValue[i] = byte(i % 256)
 	}
@@ -166,7 +164,7 @@ func BenchmarkLSM_LargeValues_10KB(b *testing.B) {
 
 func BenchmarkLSM_LargeValues_100KB(b *testing.B) {
 	lsm := createTestLSM(&testing.T{})
-	largeValue := make([]byte, 102400) // 100KB
+	largeValue := make([]byte, 102400)
 	for i := range largeValue {
 		largeValue[i] = byte(i % 256)
 	}

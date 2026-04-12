@@ -23,7 +23,6 @@ func NewClockReplacer(poolSize int) *ClockReplacer {
 	}
 }
 
-// TODO: prefer not dirty pages for eviction, as they are faster to evict
 func (cr *ClockReplacer) Victim() (FrameID, bool) {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
@@ -37,15 +36,12 @@ func (cr *ClockReplacer) Victim() (FrameID, bool) {
 
 		if frame.inReplacer {
 			if frame.referenced {
-				// Second chance: clear bit and move on
 				frame.referenced = false
 			} else {
-				// Victim found
 				victimID := FrameID(cr.clockHand)
 				frame.inReplacer = false
 				cr.activeSize--
 
-				// Advance hand for next call
 				cr.clockHand = (cr.clockHand + 1) % cr.poolSize
 				return victimID, true
 			}

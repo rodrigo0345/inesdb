@@ -4,7 +4,6 @@ import (
 	"testing"
 )
 
-// mockWriteHandler implements WriteHandler for testing
 type mockWriteHandler struct{}
 
 func (m *mockWriteHandler) Write(txn *Transaction, key []byte, value []byte) error {
@@ -15,7 +14,6 @@ func (m *mockWriteHandler) Delete(txn *Transaction, key []byte) error {
 	return nil
 }
 
-// TestWriteHandlerInterface tests that write handler implements required interface
 func TestWriteHandlerInterface(t *testing.T) {
 	handler := &mockWriteHandler{}
 
@@ -23,20 +21,17 @@ func TestWriteHandlerInterface(t *testing.T) {
 	value := []byte("test_value")
 	txn := NewTransaction(1, READ_COMMITTED)
 
-	// Should be able to call Write
 	err := handler.Write(txn, key, value)
 	if err != nil {
 		t.Errorf("expected nil error, got %v", err)
 	}
 
-	// Should be able to call Delete
 	err = handler.Delete(txn, key)
 	if err != nil {
 		t.Errorf("expected nil error, got %v", err)
 	}
 }
 
-// TestDefaultWriteHandlerCreation tests creating default write handler
 func TestDefaultWriteHandlerCreation(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	mockRollbackMgr := NewRollbackManager(mockBufMgr)
@@ -50,7 +45,6 @@ func TestDefaultWriteHandlerCreation(t *testing.T) {
 	}
 }
 
-// TestMVCCWriteHandlerCreation tests creating MVCC write handler
 func TestMVCCWriteHandlerCreation(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	mockStorage := &mockStorageEngine{}
@@ -63,7 +57,6 @@ func TestMVCCWriteHandlerCreation(t *testing.T) {
 	}
 }
 
-// TestWriteHandlerWithDifferentIsolationLevels tests write handler with various isolation levels
 func TestWriteHandlerWithDifferentIsolationLevels(t *testing.T) {
 	isolationLevels := []uint8{
 		READ_UNCOMMITTED,
@@ -93,7 +86,6 @@ func TestWriteHandlerWithDifferentIsolationLevels(t *testing.T) {
 	}
 }
 
-// TestWriteHandlerMultiple tests creating multiple write handlers
 func TestWriteHandlerMultiple(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	mockRollbackMgr := NewRollbackManager(mockBufMgr)
@@ -108,7 +100,6 @@ func TestWriteHandlerMultiple(t *testing.T) {
 	}
 }
 
-// TestWriteHandlerBasicOperation tests basic write operation
 func TestWriteHandlerBasicOperation(t *testing.T) {
 	handler := &mockWriteHandler{}
 	txn := NewTransaction(1, READ_COMMITTED)
@@ -126,19 +117,15 @@ func TestWriteHandlerBasicOperation(t *testing.T) {
 	}
 }
 
-// TestWriteHandlerWithNilKey tests write handler with nil key
 func TestWriteHandlerWithNilKey(t *testing.T) {
 	handler := &mockWriteHandler{}
 	txn := NewTransaction(1, READ_COMMITTED)
 
-	// Should handle nil key (behavior depends on implementation)
 	err := handler.Write(txn, nil, []byte("value"))
 	if err != nil {
-		// Not necessarily an error, depends on implementation
 	}
 }
 
-// TestWriteHandlerWithEmptyValue tests write handler with empty value
 func TestWriteHandlerWithEmptyValue(t *testing.T) {
 	handler := &mockWriteHandler{}
 	txn := NewTransaction(1, READ_COMMITTED)
@@ -146,16 +133,13 @@ func TestWriteHandlerWithEmptyValue(t *testing.T) {
 
 	err := handler.Write(txn, key, []byte{})
 	if err != nil {
-		// Empty values might be allowed
 	}
 }
 
-// TestWriteHandlerMultipleWrites tests multiple writes in transaction
 func TestWriteHandlerMultipleWrites(t *testing.T) {
 	handler := &mockWriteHandler{}
 	txn := NewTransaction(1, READ_COMMITTED)
 
-	// Multiple writes
 	for i := 0; i < 5; i++ {
 		key := []byte{byte(i)}
 		value := []byte{byte(i * 2)}
@@ -166,12 +150,10 @@ func TestWriteHandlerMultipleWrites(t *testing.T) {
 	}
 }
 
-// TestWriteHandlerInterleavedOperations tests interleaved writes and deletes
 func TestWriteHandlerInterleavedOperations(t *testing.T) {
 	handler := &mockWriteHandler{}
 	txn := NewTransaction(1, SERIALIZABLE)
 
-	// Interleaved write and delete
 	err := handler.Write(txn, []byte("key1"), []byte("val1"))
 	if err != nil {
 		t.Errorf("expected nil error, got %v", err)

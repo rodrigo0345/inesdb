@@ -5,7 +5,6 @@ import (
 	"fmt"
 )
 
-// SchemaJSON is the JSON representation of a table schema for serialization
 type SchemaJSON struct {
 	Name       string                `json:"name"`
 	Columns    map[string]ColumnJSON `json:"columns"`
@@ -16,14 +15,12 @@ type SchemaJSON struct {
 	ModifiedAt int64                 `json:"modifiedAt"`
 }
 
-// ColumnJSON is the JSON representation of a column
 type ColumnJSON struct {
 	Name     string `json:"name"`
 	DataType string `json:"dataType"`
 	Nullable bool   `json:"nullable"`
 }
 
-// IndexJSON is the JSON representation of an index
 type IndexJSON struct {
 	Name     string   `json:"name"`
 	Type     string   `json:"type"`
@@ -32,7 +29,6 @@ type IndexJSON struct {
 	IsSparse bool     `json:"isSparse"`
 }
 
-// ToJSON converts a TableSchema to JSON bytes
 func (ts *TableSchema) ToJSON() ([]byte, error) {
 	if err := ts.Validate(); err != nil {
 		return nil, fmt.Errorf("schema validation failed: %w", err)
@@ -71,7 +67,6 @@ func (ts *TableSchema) ToJSON() ([]byte, error) {
 	return json.Marshal(schemaJSON)
 }
 
-// FromJSON creates a TableSchema from JSON bytes
 func FromJSON(data []byte) (*TableSchema, error) {
 	var schemaJSON SchemaJSON
 	if err := json.Unmarshal(data, &schemaJSON); err != nil {
@@ -82,7 +77,6 @@ func FromJSON(data []byte) (*TableSchema, error) {
 	ts.CreatedAt = schemaJSON.CreatedAt
 	ts.ModifiedAt = schemaJSON.ModifiedAt
 
-	// Restore columns in order
 	for _, colName := range schemaJSON.ColumnList {
 		colJSON, exists := schemaJSON.Columns[colName]
 		if !exists {
@@ -94,9 +88,7 @@ func FromJSON(data []byte) (*TableSchema, error) {
 		}
 	}
 
-	// Restore indexes
 	for idxName, idxJSON := range schemaJSON.Indexes {
-		// For primary key indexes, always pass false for isUnique since they're implicitly unique
 		isUnique := idxJSON.IsUnique
 		if idxJSON.Type == "primary" {
 			isUnique = false
@@ -110,7 +102,6 @@ func FromJSON(data []byte) (*TableSchema, error) {
 	return ts, nil
 }
 
-// String returns a human-readable representation of the schema
 func (ts *TableSchema) String() string {
 	result := fmt.Sprintf("Table: %s\n", ts.Name)
 	result += fmt.Sprintf("Primary Key: %s\n", ts.PrimaryKey)

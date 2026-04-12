@@ -2,7 +2,6 @@ package txn
 
 import "github.com/rodrigo0345/omag/internal/storage/schema"
 
-// IIsolationManager defines the interface for different isolation level implementations
 type IIsolationManager interface {
 	BeginTransaction(isolationLevel uint8, tableName string, tableSchema *schema.TableSchema) int64
 	Read(txnID int64, Key []byte) ([]byte, error)

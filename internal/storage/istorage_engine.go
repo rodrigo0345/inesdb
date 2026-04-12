@@ -1,6 +1,5 @@
 package storage
 
-// ScanEntry represents a key-value pair from a scan operation
 type ScanEntry struct {
 	Key   []byte
 	Value []byte

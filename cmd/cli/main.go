@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -22,19 +23,32 @@ const (
 	walPath = "./test.wal"
 )
 
+// RecoveryConfig controls recovery behavior
+type RecoveryConfig struct {
+	SkipRecovery bool // Skip recovery on startup
+	RecoveryOnly bool // Perform recovery then exit (for inspection)
+	ValidateOnly bool // Validate without detailed recovery
+}
+
 // DatabaseTUI represents the database with 2PL isolation
 type DatabaseTUI struct {
-	storageEngine storage.IStorageEngine // BPlusTreeBackend or LSMTreeBackend
-	isolationMgr  txn.IIsolationManager  // 2PL isolation
-	bufferPool    buffer.IBufferPoolManager
-	diskMgr       *buffer.DiskManager
-	walMgr        log.ILogManager
-	schemaManager *schema.SchemaManager                    // Schema storage
-	indexManagers map[string]*schema.SecondaryIndexManager // Index managers per table
+	storageEngine  storage.IStorageEngine // BPlusTreeBackend or LSMTreeBackend
+	isolationMgr   txn.IIsolationManager  // 2PL isolation
+	bufferPool     buffer.IBufferPoolManager
+	diskMgr        *buffer.DiskManager
+	walMgr         log.ILogManager
+	schemaManager  *schema.SchemaManager                    // Schema storage
+	indexManagers  map[string]*schema.SecondaryIndexManager // Index managers per table
+	recoveryConfig RecoveryConfig                           // Recovery configuration
 }
 
 // NewDatabaseTUI initializes database with 2PL + BTree
 func NewDatabaseTUI() (*DatabaseTUI, error) {
+	return NewDatabaseTUIWithConfig(RecoveryConfig{})
+}
+
+// NewDatabaseTUIWithConfig initializes database with recovery configuration
+func NewDatabaseTUIWithConfig(recoveryConfig RecoveryConfig) (*DatabaseTUI, error) {
 	// Disk & Buffer
 	diskMgr, err := buffer.NewDiskManager(dbPath)
 	if err != nil {
@@ -64,6 +78,65 @@ func NewDatabaseTUI() (*DatabaseTUI, error) {
 
 	// Write Coordination
 	rollbackMgr := txn.NewRollbackManager(bufferPool)
+
+	// RECOVER PHASE: Crash recovery and state validation
+	var recoveryState *log.RecoveryState
+	var recoveryStats txn.RecoveryStats
+
+	if !recoveryConfig.SkipRecovery {
+		fmt.Printf("\n=== CRASH RECOVERY PHASE ===\n")
+
+		// Step 1: Run recovery coordinator (WAL analysis/redo/undo + storage engine recovery)
+		recoveryCoordinator := txn.NewDefaultRecoveryCoordinator(walMgr, storageEngine, bufferPool, rollbackMgr)
+		recState, err := recoveryCoordinator.RecoverFromCrash(nil)
+		if err != nil {
+			fmt.Printf("⚠ Crash recovery encountered issues: %v\n", err)
+		}
+		recoveryState = recState
+		recoveryStats = recoveryCoordinator.GetRecoveryStats()
+
+		// Step 2: Validate recovered state
+		validator := txn.NewRecoveryValidator(storageEngine, bufferPool)
+		validationResult, err := validator.ValidateRecoveredState(recoveryState)
+		if err != nil {
+			fmt.Printf("⚠ State validation failed: %v\n", err)
+		}
+
+		if validationResult != nil {
+			fmt.Printf("%s", validationResult.GetValidationSummary())
+			if !validationResult.IsValid {
+				fmt.Printf("⚠ Recovery validation warnings detected (continuing anyway)\n")
+			}
+		}
+
+		// Step 3: Log recovery summary
+		if recoveryState != nil {
+			fmt.Printf("\nRecovery Summary:\n")
+			fmt.Printf("  Committed transactions: %d\n", len(recoveryState.CommittedTxns))
+			fmt.Printf("  Aborted transactions: %d\n", len(recoveryState.AbortedTxns))
+			fmt.Printf("  Recovered pages: %d\n", len(recoveryState.PageStates))
+			fmt.Printf("  Dirty pages at crash: %d\n", len(recoveryState.DirtyPages))
+			fmt.Printf("  Recovery statistics:\n")
+			fmt.Printf("    Total records processed: %d\n", recoveryStats.TotalRecords)
+			fmt.Printf("    Records redone: %d\n", recoveryStats.RecordsRedo)
+			fmt.Printf("    Records undone: %d\n", recoveryStats.RecordsUndo)
+			fmt.Printf("    Duration: %dms\n", recoveryStats.Duration)
+		}
+
+		// Step 4: If recovery-only mode, exit after recovery
+		if recoveryConfig.RecoveryOnly {
+			fmt.Printf("\n=== RECOVERY COMPLETE (exiting due to --recovery-only flag) ===\n")
+			return &DatabaseTUI{
+				storageEngine:  storageEngine,
+				bufferPool:     bufferPool,
+				diskMgr:        diskMgr,
+				walMgr:         walMgr,
+				recoveryConfig: recoveryConfig,
+			}, nil
+		}
+
+		fmt.Printf("=== RECOVERY PHASE COMPLETE ===\n\n")
+	}
 	writeHandler := txn.NewDefaultWriteHandler(
 		storageEngine,
 		rollbackMgr,
@@ -88,13 +161,14 @@ func NewDatabaseTUI() (*DatabaseTUI, error) {
 	schemaManager := schema.NewSchemaManager(storageEngine)
 
 	return &DatabaseTUI{
-		storageEngine: storageEngine,
-		isolationMgr:  isolationMgr,
-		bufferPool:    bufferPool,
-		diskMgr:       diskMgr,
-		walMgr:        walMgr,
-		schemaManager: schemaManager,
-		indexManagers: indexManagers,
+		storageEngine:  storageEngine,
+		isolationMgr:   isolationMgr,
+		bufferPool:     bufferPool,
+		diskMgr:        diskMgr,
+		walMgr:         walMgr,
+		schemaManager:  schemaManager,
+		indexManagers:  indexManagers,
+		recoveryConfig: recoveryConfig,
 	}, nil
 }
 
@@ -698,10 +772,27 @@ func (db *DatabaseTUI) Run() {
 }
 
 func main() {
-	db, err := NewDatabaseTUI()
+	// Parse command-line flags for recovery control
+	skipRecoveryFlag := flag.Bool("skip-recovery", false, "Skip crash recovery on startup")
+	recoveryOnlyFlag := flag.Bool("recovery-only", false, "Perform recovery then exit (for inspection)")
+	flag.Parse()
+
+	// Create recovery configuration
+	recoveryConfig := RecoveryConfig{
+		SkipRecovery: *skipRecoveryFlag,
+		RecoveryOnly: *recoveryOnlyFlag,
+	}
+
+	db, err := NewDatabaseTUIWithConfig(recoveryConfig)
 	if err != nil {
 		fmt.Printf("✗ Failed to init database: %v\n", err)
 		os.Exit(1)
 	}
+
+	// If recovery-only mode, exit after database init (recovery done in NewDatabaseTUIWithConfig)
+	if recoveryConfig.RecoveryOnly {
+		return
+	}
+
 	db.Run()
 }

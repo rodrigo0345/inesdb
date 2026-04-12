@@ -6,11 +6,11 @@ import (
 )
 
 const (
-	MetaTypeOffset     = 0  // 2 bytes (PageType)
-	MetaMagicOffset    = 2  // 4 bytes (uint32)
-	MetaVersionOffset  = 6  // 2 bytes (uint16)
-	MetaPageSizeOffset = 8  // 4 bytes (uint32)
-	MetaRootPageOffset = 12 // 8 bytes (uint64)
+	MetaTypeOffset     = 0
+	MetaMagicOffset    = 2
+	MetaVersionOffset  = 6
+	MetaPageSizeOffset = 8
+	MetaRootPageOffset = 12
 )
 
 type MetaLogicPage struct {
@@ -37,7 +37,7 @@ func NewMetaPageWithSize(pageSize uint32) *MetaLogicPage {
 	m.SetMagicNumber(MagicNumber)
 	m.SetVersion(1)
 	m.SetPageSize(pageSize)
-	m.SetRootPage(0) // 0 means tree is empty, will be initialized on first put
+	m.SetRootPage(0)
 
 	return m
 }

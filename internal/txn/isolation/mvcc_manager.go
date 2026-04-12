@@ -14,15 +14,14 @@ type MVCCManager struct {
 	transactions    map[TransactionID]*txn.Transaction
 	logManager      log.ILogManager
 	bufferManager   buffer.IBufferPoolManager
-	writeHandler    txn.WriteHandler     // For coordinating writes (optional WAL)
-	rollbackManager *txn.RollbackManager // For abort handling
+	writeHandler    txn.WriteHandler
+	rollbackManager *txn.RollbackManager
 	primaryIndex    storage.IStorageEngine
 	indexManagers   map[string]*schema.SecondaryIndexManager
 	nextTxnID       int64
 	indexSnapshots  map[TransactionID]map[string]string
 }
 
-// NewMVCCManager creates a new MVCC isolation manager
 func NewMVCCManager(
 	logMgr log.ILogManager,
 	bufferMgr buffer.IBufferPoolManager,
@@ -86,14 +85,13 @@ func (m *MVCCManager) Write(txnID int64, Key []byte, Value []byte) error {
 	writeOp := txn.WriteOperation{
 		Key:        Key,
 		Value:      Value,
-		PageID:     0, // TODO: determine actual page ID from storage engine
-		Offset:     0, // TODO: determine actual offset within page
+		PageID:     0,
+		Offset:     0,
 		TableName:  tableName,
 		SchemaInfo: tableSchema,
 		PrimaryKey: Key,
 	}
 
-	// WriteHandler coordinates write (MVCC typically doesn't use WAL for writes)
 	return m.writeHandler.HandleWrite(transaction, writeOp)
 }
 
@@ -143,7 +141,6 @@ func (m *MVCCManager) Close() error {
 	return nil
 }
 
-// captureIndexSnapshot captures the state of indexes for the given table
 func (m *MVCCManager) captureIndexSnapshot(tableName string) map[string]string {
 	snapshot := make(map[string]string)
 
@@ -164,7 +161,6 @@ func (m *MVCCManager) captureIndexSnapshot(tableName string) map[string]string {
 	return snapshot
 }
 
-// validateIndexSnapshot validates that the index state hasn't changed since transaction start
 func (m *MVCCManager) validateIndexSnapshot(txnID TransactionID, tableName string) error {
 	startSnapshot, exists := m.indexSnapshots[txnID]
 	if !exists {

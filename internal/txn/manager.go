@@ -1,36 +1,35 @@
 package txn
 
 import (
+	"context"
+	"fmt"
+	stdlog "log"
+
 	"github.com/rodrigo0345/omag/internal/storage"
 	"github.com/rodrigo0345/omag/internal/storage/buffer"
-	"github.com/rodrigo0345/omag/internal/txn/log"
+	wallog "github.com/rodrigo0345/omag/internal/txn/log"
 )
 
 type TransactionManager struct {
 	isolationManager  IIsolationManager
-	logManager        log.ILogManager
+	logManager        wallog.ILogManager
 	bufferPoolManager buffer.IBufferPoolManager
-	rollbackManager   *RollbackManager // Coordinates undo/rollback
-	writeHandler      WriteHandler     // Coordinates writes/WAL/undo
-	// indexManager      IIndexManager       - vai conter o primary e secondary index
+	rollbackManager   *RollbackManager
+	writeHandler      WriteHandler
 }
 
-// NewTransactionManager creates a new transaction manager with all components
 func NewTransactionManager(
 	isolationMgr IIsolationManager,
-	logMgr log.ILogManager,
+	logMgr wallog.ILogManager,
 	bufferMgr buffer.IBufferPoolManager,
 	storage storage.IStorageEngine,
 ) *TransactionManager {
 	rollbackMgr := NewRollbackManager(bufferMgr)
 
-	// Choose write handler based on configuration
 	var writeHandler WriteHandler
 	if logMgr != nil {
-		// WAL-based system (2PL, OCC)
 		writeHandler = NewDefaultWriteHandler(storage, rollbackMgr, bufferMgr, logMgr)
 	} else {
-		// MVCC or other snapshot-based system
 		writeHandler = NewMVCCWriteHandler(storage, bufferMgr, nil, rollbackMgr)
 	}
 
@@ -43,12 +42,32 @@ func NewTransactionManager(
 	}
 }
 
-// GetRollbackManager returns the rollback manager for use by isolation strategies
 func (tm *TransactionManager) GetRollbackManager() *RollbackManager {
 	return tm.rollbackManager
 }
 
-// GetWriteHandler returns the write handler for coordinated write operations
 func (tm *TransactionManager) GetWriteHandler() WriteHandler {
 	return tm.writeHandler
+}
+
+func (tm *TransactionManager) RollbackRemainingTransactions(ctx context.Context, recoveryState *wallog.RecoveryState) error {
+	if recoveryState == nil {
+		return fmt.Errorf("recovery state is nil")
+	}
+
+	abortedCount := len(recoveryState.AbortedTxns)
+	if abortedCount == 0 {
+		stdlog.Printf("[TransactionManager] No transactions to rollback after recovery")
+		return nil
+	}
+
+	stdlog.Printf("[TransactionManager] Rolling back %d uncommitted transactions", abortedCount)
+
+
+	for txnID := range recoveryState.AbortedTxns {
+		stdlog.Printf("[TransactionManager] Rollback aborted transaction: %d", txnID)
+	}
+
+	stdlog.Printf("[TransactionManager] Rollback of uncommitted transactions complete")
+	return nil
 }

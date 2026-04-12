@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// TestNewBufferPoolManager tests buffer pool creation
 func TestNewBufferPoolManager(t *testing.T) {
 	dm := createTestDiskManager(t)
 	defer dm.Close()
@@ -32,7 +31,6 @@ func TestNewBufferPoolManager(t *testing.T) {
 
 }
 
-// TestNewPage tests new page allocation
 func TestNewPage_Standard(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
@@ -52,7 +50,6 @@ func TestNewPage_Standard(t *testing.T) {
 		t.Fatal("expected new page to not be dirty")
 	}
 
-	// Free list should be reduced
 	if len(bpm.freeList) != 9 {
 		t.Fatalf("expected 9 remaining free frames, got %d", len(bpm.freeList))
 	}
@@ -60,17 +57,14 @@ func TestNewPage_Standard(t *testing.T) {
 	bpm.UnpinPage(page.GetID(), false)
 }
 
-// TestNewPage_BufferFull tests allocating when buffer is full
 func TestNewPage_BufferFull(t *testing.T) {
-	bpm := createTestBufferPool(t, 2) // Small buffer
+	bpm := createTestBufferPool(t, 2)
 
-	// Allocate 2 pages
 	page1Ref, _ := bpm.NewPage()
 	page1 := *page1Ref
 	page2Ref, _ := bpm.NewPage()
 	page2 := *page2Ref
 
-	// Both pages are pinned, so no room to evict
 	page3, err := bpm.NewPage()
 	if err != ErrBufferFull {
 		t.Fatalf("expected ErrBufferFull, got %v or page %v", err, page3)
@@ -80,7 +74,6 @@ func TestNewPage_BufferFull(t *testing.T) {
 	bpm.UnpinPage(page2.GetID(), false)
 }
 
-// TestFetchPage_NewPage tests fetching a page that doesn't exist (loads from disk)
 func TestFetchPage_NewPage(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
@@ -99,7 +92,6 @@ func TestFetchPage_NewPage(t *testing.T) {
 	bpm.UnpinPage(99, false)
 }
 
-// TestFetchPage_AlreadyCached tests fetching a page that's already in buffer
 func TestFetchPage_AlreadyCached(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
@@ -120,16 +112,13 @@ func TestFetchPage_AlreadyCached(t *testing.T) {
 	bpm.UnpinPage(50, false)
 }
 
-// TestFetchPage_BufferFull tests fetching when buffer is full
 func TestFetchPage_BufferFull(t *testing.T) {
-	bpm := createTestBufferPool(t, 1) // Only 1 frame
+	bpm := createTestBufferPool(t, 1)
 
-	// Allocate the single page
 	page1Ref, _ := bpm.NewPage()
 	page1 := *page1Ref
 	page1.SetDirty(true)
 
-	// Try to fetch another page when buffer is full and only page is pinned
 	_, err := bpm.PinPage(100)
 	if err != ErrBufferFull {
 		t.Fatalf("expected ErrBufferFull, got %v", err)
@@ -138,30 +127,24 @@ func TestFetchPage_BufferFull(t *testing.T) {
 	bpm.UnpinPage(page1.GetID(), true)
 }
 
-// TestFetchPage_EvictsAndFlushes tests eviction and flush on fetch
 func TestFetchPage_EvictsAndFlushes(t *testing.T) {
 	bpm := createTestBufferPool(t, 2)
 
-	// Create and write to page 1
 	page1Ref, _ := bpm.NewPage()
 	page1 := *page1Ref
 	page1.SetDirty(true)
 	id1 := page1.GetID()
 
-	// Unpin page1 so it can be evicted
 	bpm.UnpinPage(id1, true)
 
-	// Create page 2 to fill up the buffer pool
 	page2Ref, _ := bpm.NewPage()
 	page2 := *page2Ref
 	id2 := page2.GetID()
 	bpm.UnpinPage(id2, true)
 
-	// Fetch page 3, should evict page1 (LRU) and flush it
 	page3, _ := bpm.PinPage(300)
 	page3.SetDirty(true)
 
-	// page1 should now be evicted from page table
 	if _, exists := bpm.pageTable[id1]; exists {
 		t.Fatal("expected page1 to be evicted from page table")
 	}
@@ -169,7 +152,6 @@ func TestFetchPage_EvictsAndFlushes(t *testing.T) {
 	bpm.UnpinPage(page3.GetID(), true)
 }
 
-// TestUnpinPage_Success tests unpinning a page
 func TestUnpinPage_Success(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
@@ -191,7 +173,6 @@ func TestUnpinPage_Success(t *testing.T) {
 	}
 }
 
-// TestUnpinPage_MarkDirty tests unpinning and marking dirty
 func TestUnpinPage_MarkDirty(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
@@ -206,7 +187,6 @@ func TestUnpinPage_MarkDirty(t *testing.T) {
 	}
 }
 
-// TestUnpinPage_NotFound tests unpinning non-existent page
 func TestUnpinPage_NotFound(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
@@ -216,14 +196,12 @@ func TestUnpinPage_NotFound(t *testing.T) {
 	}
 }
 
-// TestUnpinPage_ZeroPinCount tests unpinning when pin count is already 0
 func TestUnpinPage_ZeroPinCount(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
 	page, _ := bpm.PinPage(3)
 	bpm.UnpinPage(3, false)
 
-	// Unpin again when pin count is 0 - should not go negative
 	err := bpm.UnpinPage(3, false)
 	if err != nil {
 		t.Fatalf("failed to unpin second time: %v", err)
@@ -234,7 +212,6 @@ func TestUnpinPage_ZeroPinCount(t *testing.T) {
 	}
 }
 
-// TestFlushPage_Success tests flushing a single page
 func TestFlushPage_Success(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
@@ -257,7 +234,6 @@ func TestFlushPage_Success(t *testing.T) {
 	bpm.UnpinPage(pageID, false)
 }
 
-// TestFlushPage_NotFound tests flushing non-existent page
 func TestFlushPage_NotFound(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
@@ -267,11 +243,9 @@ func TestFlushPage_NotFound(t *testing.T) {
 	}
 }
 
-// TestFlushAll tests flushing all pages
 func TestFlushAll_Success(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
-	// Create multiple pages with dirty flags
 	page1Ref, _ := bpm.NewPage()
 	page1 := *page1Ref
 	page1.SetDirty(true)
@@ -292,7 +266,6 @@ func TestFlushAll_Success(t *testing.T) {
 		t.Fatalf("failed to flush all: %v", err)
 	}
 
-	// All should be flushed
 	if page1.IsDirty() {
 		t.Fatal("expected page1 to not be dirty")
 	}
@@ -308,7 +281,6 @@ func TestFlushAll_Success(t *testing.T) {
 	bpm.UnpinPage(id3, false)
 }
 
-// TestFlushAll_Empty tests flushing empty buffer
 func TestFlushAll_Empty(t *testing.T) {
 	bpm := createTestBufferPool(t, 10)
 
@@ -318,7 +290,6 @@ func TestFlushAll_Empty(t *testing.T) {
 	}
 }
 
-// TestClose_AllPagesFlushed tests that Close flushes dirty pages
 func TestClose_AllPagesFlushed(t *testing.T) {
 	dm := createTestDiskManager(t)
 	bpm := NewBufferPoolManager(10, dm)
@@ -331,7 +302,6 @@ func TestClose_AllPagesFlushed(t *testing.T) {
 	page2 := *page2Ref
 	page2.SetDirty(true)
 
-	// Verify pages are dirty before close
 	if !page1.IsDirty() || !page2.IsDirty() {
 		t.Fatal("expected pages to be dirty before close")
 	}
@@ -341,38 +311,29 @@ func TestClose_AllPagesFlushed(t *testing.T) {
 		t.Fatalf("failed to close: %v", err)
 	}
 
-	// Note: Pages are written to disk but remain marked dirty in memory
-	// This is expected behavior - the pages themselves aren't modified by Close
-	// They're just flushed to disk
 }
 
-// TestPageReuse tests that pages can be reused after eviction
 func TestPageReuse(t *testing.T) {
 	bpm := createTestBufferPool(t, 2)
 
-	// Allocate page 1
 	page1Ref, _ := bpm.NewPage()
 	page1 := *page1Ref
 	id1 := page1.GetID()
 	bpm.UnpinPage(id1, false)
 
-	// Allocate page 2 (uses second frame)
 	page2Ref, _ := bpm.NewPage()
 	page2 := *page2Ref
 	id2 := page2.GetID()
 	bpm.UnpinPage(id2, false)
 
-	// Allocate page 3, should evict page 1
 	page3Ref, _ := bpm.NewPage()
 	page3 := *page3Ref
 	id3 := page3.GetID()
 
-	// Verify page 1 was evicted
 	if _, exists := bpm.pageTable[id1]; exists {
 		t.Fatal("expected page1 to be evicted")
 	}
 
-	// Verify page 3 is using frame 0
 	if _, exists := bpm.pageTable[id3]; !exists {
 		t.Fatal("expected page3 to be in pageTable")
 	}
@@ -380,7 +341,6 @@ func TestPageReuse(t *testing.T) {
 	bpm.UnpinPage(id3, false)
 }
 
-// TestGetPoolSize tests the GetPoolSize method
 func TestGetPoolSize(t *testing.T) {
 	testCases := []int{1, 5, 10, 20, 50, 100}
 
@@ -392,7 +352,6 @@ func TestGetPoolSize(t *testing.T) {
 	}
 }
 
-// Helper function to create test disk manager
 func createTestDiskManager(t *testing.T) *DiskManager {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -403,7 +362,6 @@ func createTestDiskManager(t *testing.T) *DiskManager {
 	return dm
 }
 
-// Helper function to create test buffer pool
 func createTestBufferPool(t *testing.T, poolSize int) *BufferPoolManager {
 	dm := createTestDiskManager(t)
 	bfpoll := NewBufferPoolManager(poolSize, dm)

@@ -1,6 +1,5 @@
 package page
 
-// this interface should be algo independent
 type IResourcePage interface {
 	RLock()
 	RUnlock()

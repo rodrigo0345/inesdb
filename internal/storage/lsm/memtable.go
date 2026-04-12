@@ -2,7 +2,7 @@ package lsm
 
 type MemTable struct {
 	data       map[string][]byte
-	tombstones map[string]bool // Track deleted keys; presence = true
+	tombstones map[string]bool
 }
 
 func NewMemTable() *MemTable {
@@ -32,7 +32,7 @@ func (m *MemTable) MarkTombstone(key []byte) {
 	keyStr := string(key)
 	m.tombstones[keyStr] = true
 	if _, ok := m.data[keyStr]; !ok {
-		m.data[keyStr] = nil // Placeholder so key appears in iteration
+		m.data[keyStr] = nil
 	}
 }
 

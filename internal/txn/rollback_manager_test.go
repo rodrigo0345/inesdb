@@ -6,7 +6,6 @@ import (
 	"github.com/rodrigo0345/omag/internal/storage/page"
 )
 
-// mockBufferPoolManager implements IBufferPoolManager for testing
 type mockBufferPoolManager struct{}
 
 func (m *mockBufferPoolManager) NewPage() (*page.IResourcePage, error) {
@@ -29,7 +28,6 @@ func (m *mockBufferPoolManager) Close() error {
 	return nil
 }
 
-// TestNewRollbackManager tests rollback manager creation
 func TestNewRollbackManager(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	rm := NewRollbackManager(mockBufMgr)
@@ -39,7 +37,6 @@ func TestNewRollbackManager(t *testing.T) {
 	}
 }
 
-// TestRecordPageWrite tests recording page write operations
 func TestRecordPageWrite(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	rm := NewRollbackManager(mockBufMgr)
@@ -59,64 +56,53 @@ func TestRecordPageWrite(t *testing.T) {
 	}
 }
 
-// TestRecordPageWriteMultiple tests recording multiple page writes
 func TestRecordPageWriteMultiple(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	rm := NewRollbackManager(mockBufMgr)
 	txn := NewTransaction(1, READ_COMMITTED)
 
-	// Record multiple writes
 	opID1, _ := rm.RecordPageWrite(txn, 0, 0, []byte{1})
 	opID2, _ := rm.RecordPageWrite(txn, 1, 0, []byte{2})
 	opID3, _ := rm.RecordPageWrite(txn, 2, 0, []byte{3})
 
-	// IDs should be unique and increasing
 	if opID1 >= opID2 || opID2 >= opID3 {
 		t.Error("operation IDs should be unique and increasing")
 	}
 }
 
-// TestRollbackTransactionNil tests rollback with nil transaction
 func TestRollbackTransactionNil(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	rm := NewRollbackManager(mockBufMgr)
 
-	// Should error with nil transaction - test the error condition only
 	err := rm.RollbackTransaction(nil, nil, nil)
 	if err == nil {
 		t.Error("expected error when rolling back nil transaction")
 	}
 }
 
-// TestRollbackTransactionCommitted tests rolling back committed transaction
 func TestRollbackTransactionCommitted(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	rm := NewRollbackManager(mockBufMgr)
 	txn := NewTransaction(1, READ_COMMITTED)
 
-	// Mark as committed
 	txn.Commit()
 
-	// Should error when trying to rollback committed transaction
 	err := rm.RollbackTransaction(txn, nil, nil)
 	if err == nil {
 		t.Error("expected error when rolling back committed transaction")
 	}
 }
 
-// TestHasOperations tests checking for recorded operations
 func TestHasOperations(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	rm := NewRollbackManager(mockBufMgr)
 	txn := NewTransaction(1, READ_COMMITTED)
 
-	// Transaction with no operations
 	hasOps := rm.HasOperations(txn)
 	if hasOps {
 		t.Error("expected no operations for new transaction")
 	}
 
-	// Add an operation
 	rm.RecordPageWrite(txn, 0, 0, []byte{1})
 
 	hasOps = rm.HasOperations(txn)
@@ -125,7 +111,6 @@ func TestHasOperations(t *testing.T) {
 	}
 }
 
-// TestRollbackToSavePointNil tests rollback to savepoint with nil transaction
 func TestRollbackToSavePointNil(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	rm := NewRollbackManager(mockBufMgr)
@@ -137,7 +122,6 @@ func TestRollbackToSavePointNil(t *testing.T) {
 	}
 }
 
-// TestRollbackToSavePointInvalid tests rollback with invalid savepoint
 func TestRollbackToSavePointInvalid(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	rm := NewRollbackManager(mockBufMgr)
@@ -150,23 +134,19 @@ func TestRollbackToSavePointInvalid(t *testing.T) {
 	}
 }
 
-// TestGetOperationCount tests getting operation count
 func TestGetOperationCount(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	rm := NewRollbackManager(mockBufMgr)
 	txn := NewTransaction(1, READ_COMMITTED)
 
-	// Add some operations indirectly through Record
 	rm.RecordPageWrite(txn, 0, 0, []byte{1})
 	rm.RecordPageWrite(txn, 1, 0, []byte{2})
 
-	// Check using HasOperations
 	if !rm.HasOperations(txn) {
 		t.Error("expected operations to be recorded")
 	}
 }
 
-// TestRollbackManagerTransactionID tests verifying transaction ID in rollback
 func TestRollbackManagerTransactionID(t *testing.T) {
 	txn := NewTransaction(42, SERIALIZABLE)
 
@@ -175,12 +155,10 @@ func TestRollbackManagerTransactionID(t *testing.T) {
 	}
 }
 
-// TestMultipleTransactionsRecording tests recording operations in multiple transactions
 func TestMultipleTransactionsRecording(t *testing.T) {
 	mockBufMgr := &mockBufferPoolManager{}
 	rm := NewRollbackManager(mockBufMgr)
 
-	// Create multiple transactions
 	txn1 := NewTransaction(1, READ_COMMITTED)
 	txn2 := NewTransaction(2, READ_COMMITTED)
 
@@ -191,7 +169,6 @@ func TestMultipleTransactionsRecording(t *testing.T) {
 		t.Error("expected both records to succeed")
 	}
 
-	// Verify operations are recorded
 	if !rm.HasOperations(txn1) || !rm.HasOperations(txn2) {
 		t.Error("expected operations to be recorded for both transactions")
 	}

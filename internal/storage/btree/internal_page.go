@@ -7,13 +7,13 @@ import (
 )
 
 const (
-	InternalHeaderTypeOffset      = 0  // 2 bytes (PageType)
-	InternalHeaderCellsOffset     = 2  // 2 bytes (Cell Count)
-	InternalHeaderFreeSpaceOffset = 4  // 2 bytes (Free Space Pointer)
-	InternalHeaderRightmostOffset = 6  // 8 bytes (Rightmost Child Page ID)
-	InternalHeaderSize            = 14 // Total header size for internal pages
+	InternalHeaderTypeOffset      = 0
+	InternalHeaderCellsOffset     = 2
+	InternalHeaderFreeSpaceOffset = 4
+	InternalHeaderRightmostOffset = 6
+	InternalHeaderSize            = 14
 
-	InternalCellHeaderSize = 10 // 8 bytes (Child Page ID) + 2 bytes (Key Length)
+	InternalCellHeaderSize = 10
 )
 
 type InternalLogicPage struct {
@@ -192,24 +192,19 @@ func (node *InternalLogicPage) Split(newPage *InternalLogicPage) []byte {
 	cellCount := node.CellCount()
 	midIndex := cellCount / 2
 
-	// Extract median cell to promote
 	midCell := node.GetCell(node.GetCellOffset(midIndex))
 	promotedKey := make([]byte, len(midCell.Key))
 	copy(promotedKey, midCell.Key)
 
-	// Move upper half (excluding median) to the new right page
 	for i := midIndex + 1; i < cellCount; i++ {
 		cell := node.GetCell(node.GetCellOffset(i))
 		newPage.Insert(cell.Key, cell.ChildPointer)
 	}
 
-	// Rightmost pointer shifts to the new right page
 	newPage.SetRightmostPointer(node.RightmostPointer())
 
-	// Left node's new rightmost pointer is the median key's left child
 	node.SetRightmostPointer(midCell.ChildPointer)
 
-	// Truncate the left node using a temporary page buffer
 	pageSize := uint32(len(node.data))
 	tmp := NewInternalPage(pageSize)
 	tmp.SetRightmostPointer(node.RightmostPointer())

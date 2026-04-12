@@ -8,11 +8,11 @@ import (
 )
 
 const (
-	LeafHeaderTypeOffset      = 0  // 2 bytes (PageType)
-	LeafHeaderCellsOffset     = 2  // 2 bytes (Cell Count)
-	LeafHeaderFreeSpaceOffset = 4  // 2 bytes (Free Space Pointer)
-	LeafHeaderSiblingOffset   = 6  // 8 bytes (Right Sibling Page ID)
-	LeafHeaderSize            = 14 // Total header size for leaf pages
+	LeafHeaderTypeOffset      = 0
+	LeafHeaderCellsOffset     = 2
+	LeafHeaderFreeSpaceOffset = 4
+	LeafHeaderSiblingOffset   = 6
+	LeafHeaderSize            = 14
 )
 
 type LeafLogicPage struct {
@@ -22,11 +22,9 @@ type LeafLogicPage struct {
 type Cell struct {
 	Key        []byte
 	Value      []byte
-	OverflowID uint64 // ID of first overflow page (0 if no overflow)
+	OverflowID uint64
 }
 
-// insert a key-value pair to the leaf page.
-// keeps the slot array sorted by key.
 func (node *LeafLogicPage) Insert(key []byte, value []byte) error {
 
 	cellSize := uint16(CellHeaderSize + len(key) + len(value))
@@ -36,8 +34,6 @@ func (node *LeafLogicPage) Insert(key []byte, value []byte) error {
 	availableSpace := node.FreeSpacePointer() - slotArrayEnd
 
 	if availableSpace < spaceNeeded {
-		// We might have fragmentation. Let's calculate the absolute used space.
-		// Used space = Header + (Slots) + (Sum of all active cell payloads)
 		absoluteUsedSpace := slotArrayEnd
 		for i := uint16(0); i < node.CellCount(); i++ {
 			c := node.GetCell(node.GetCellOffset(i))
@@ -45,17 +41,14 @@ func (node *LeafLogicPage) Insert(key []byte, value []byte) error {
 		}
 		actualFreeSpace := uint16(len(node.data)) - absoluteUsedSpace
 		if actualFreeSpace >= spaceNeeded {
-			// There is enough space, it's just fragmented
 			node.Vacuum()
 		} else {
 			return ErrPageFull
 		}
 	}
 
-	// sort.Search returns the smallest index where the function evaluates to true
 	insertIndex := uint16(sort.Search(int(node.CellCount()), func(i int) bool {
 		cell := node.GetCell(node.GetCellOffset(uint16(i)))
-		// bytes.Compare returns >= 0 if cell.Key is greater than or equal to our insert key
 		return bytes.Compare(cell.Key, key) >= 0
 	}))
 
@@ -63,12 +56,10 @@ func (node *LeafLogicPage) Insert(key []byte, value []byte) error {
 	node.SetFreeSpacePointer(newFreeSpace)
 	node.WriteCell(newFreeSpace, key, value)
 
-	// If we are not inserting at the very end, we need to shift slots to the right
 	if insertIndex < node.CellCount() {
 		insertPos := LeafHeaderSize + (insertIndex * SlotSize)
 		endPos := LeafHeaderSize + (node.CellCount() * SlotSize)
 
-		// built-in copy to safely shift overlapping byte slices right by 2 bytes
 		copy(node.data[insertPos+SlotSize:endPos+SlotSize], node.data[insertPos:endPos])
 	}
 
@@ -98,7 +89,6 @@ func (node *LeafLogicPage) Get(key []byte) ([]byte, error) {
 	return nil, ErrKeyNotFound
 }
 
-// lazely done, vacuum does the rest of the job
 func (node *LeafLogicPage) Remove(key []byte) error {
 	cellCount := int(node.CellCount())
 	index := sort.Search(cellCount, func(i int) bool {
@@ -110,16 +100,10 @@ func (node *LeafLogicPage) Remove(key []byte) error {
 		return ErrKeyNotFound
 	}
 
-	// cell := node.GetCell(node.GetCellOffset(uint16(index)))
-	// if !bytes.Equal(cell.Key, key) {
-	//  return ErrKeyNotFound
-	// }
 
-	// shift the slot array to the left to erase the 2-byte pointer
 	slotPos := LeafHeaderSize + (index * SlotSize)
 	endPos := LeafHeaderSize + (cellCount * SlotSize)
 
-	// shift everything after the deleted slot 2 bytes left
 	if index < cellCount-1 {
 		copy(node.data[slotPos:endPos-SlotSize], node.data[slotPos+SlotSize:endPos])
 	}
@@ -135,7 +119,6 @@ func (node *LeafLogicPage) Vacuum() {
 	cellCount := node.CellCount()
 	tmp.SetCellCount(cellCount)
 
-	// Iterate through the active slots in the current page
 	for i := uint16(0); i < cellCount; i++ {
 		oldOffset := node.GetCellOffset(i)
 		cell := node.GetCell(oldOffset)
@@ -151,7 +134,6 @@ func (node *LeafLogicPage) Vacuum() {
 		binary.LittleEndian.PutUint16(tmp.data[newSlotPos:], newFreeSpace)
 	}
 
-	// 4. Overwrite the current page's underlying byte array with the defragmented one
 	copy(node.data, tmp.data)
 }
 
@@ -206,7 +188,6 @@ func NewLeafPage(pageSize uint32) *LeafLogicPage {
 	p.SetPageType(TypeLeaf)
 	p.SetCellCount(0)
 
-	// Free space must start at the dynamic page size, not the hardcoded default!
 	p.SetFreeSpacePointer(uint16(pageSize))
 	p.SetRightSibling(0)
 
@@ -253,9 +234,9 @@ func (node *LeafLogicPage) SetRightSibling(siblingID uint64) {
 func (node *LeafLogicPage) GetCell(offset uint16) Cell {
 	offset32 := uint32(offset)
 
-	keyLen := uint32(binary.LittleEndian.Uint16(node.data[offset32 : offset32+2])) // key length is 2 bytes
-	valLen := binary.LittleEndian.Uint32(node.data[offset32+2 : offset32+6])       // value length is 4 bytes to support larger values
-	overflowID := binary.LittleEndian.Uint64(node.data[offset32+6 : offset32+14])  // overflow page ID is 8 bytes
+	keyLen := uint32(binary.LittleEndian.Uint16(node.data[offset32 : offset32+2]))
+	valLen := binary.LittleEndian.Uint32(node.data[offset32+2 : offset32+6])
+	overflowID := binary.LittleEndian.Uint64(node.data[offset32+6 : offset32+14])
 
 	keyStart := offset32 + CellHeaderSize
 	valStart := keyStart + keyLen
@@ -271,7 +252,6 @@ func (node *LeafLogicPage) WriteCell(offset uint16, key []byte, value []byte) ui
 	return node.WriteCellWithOverflow(offset, key, value, 0)
 }
 
-// WriteCellWithOverflow writes a cell with an optional overflow page ID
 func (node *LeafLogicPage) WriteCellWithOverflow(offset uint16, key []byte, value []byte, overflowID uint64) uint16 {
 	offset32 := uint32(offset)
 	keyLen := uint32(len(key))

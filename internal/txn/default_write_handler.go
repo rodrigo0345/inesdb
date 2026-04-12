@@ -61,22 +61,17 @@ func (dh *DefaultWriteHandler) HandleWrite(txn *Transaction, writeOp WriteOperat
 		}
 	}
 
-	// Handle index maintenance for DELETE
 	if writeOp.IsDelete && dh.indexManager != nil && dh.tableSchema != nil && beforeImage != nil {
-		// Extract indexed column values from before-image
 		indexValues, err := ExtractIndexValues(dh.tableSchema, beforeImage)
 		if err != nil {
 			return fmt.Errorf("failed to extract index values before delete: %w", err)
 		}
 
-		// Remove from all indexes
 		for indexName, indexValue := range indexValues {
 			if err := dh.indexManager.RemoveFromIndex(indexName, indexValue, writeOp.PrimaryKey); err != nil {
 				return fmt.Errorf("failed to remove from index %q: %w", indexName, err)
 			}
 
-			// Register cleanup to restore index entry if transaction rolls back
-			// Capture values for closure
 			capturedIndexName := indexName
 			capturedIndexValue := indexValue
 			capturedPrimaryKey := writeOp.PrimaryKey
@@ -86,7 +81,6 @@ func (dh *DefaultWriteHandler) HandleWrite(txn *Transaction, writeOp WriteOperat
 		}
 	}
 
-	// Perform storage operation
 	if writeOp.IsDelete {
 		if err := dh.storageEngine.Delete(writeOp.Key); err != nil {
 			return fmt.Errorf("storage delete failed: %w", err)
@@ -96,22 +90,17 @@ func (dh *DefaultWriteHandler) HandleWrite(txn *Transaction, writeOp WriteOperat
 			return fmt.Errorf("storage put failed: %w", err)
 		}
 
-		// Handle index maintenance for INSERT/UPDATE
 		if dh.indexManager != nil && dh.tableSchema != nil {
-			// Extract indexed column values from new value
 			indexValues, err := ExtractIndexValues(dh.tableSchema, writeOp.Value)
 			if err != nil {
 				return fmt.Errorf("failed to extract index values: %w", err)
 			}
 
-			// Add to all indexes
 			for indexName, indexValue := range indexValues {
 				if err := dh.indexManager.AddToIndex(indexName, indexValue, writeOp.PrimaryKey); err != nil {
 					return fmt.Errorf("failed to add to index %q: %w", indexName, err)
 				}
 
-				// Register cleanup to remove index entry if transaction rolls back
-				// Capture values for closure
 				capturedIndexName := indexName
 				capturedIndexValue := indexValue
 				capturedPrimaryKey := writeOp.PrimaryKey
@@ -138,7 +127,6 @@ func (dh *DefaultWriteHandler) GetStorageEngine() storage.IStorageEngine {
 	return dh.storageEngine
 }
 
-// SetIndexContext sets the index manager and schema for automatic index maintenance
 func (dh *DefaultWriteHandler) SetIndexContext(tableSchema *schema.TableSchema, indexMgr *schema.SecondaryIndexManager) error {
 	dh.tableSchema = tableSchema
 	dh.indexManager = indexMgr

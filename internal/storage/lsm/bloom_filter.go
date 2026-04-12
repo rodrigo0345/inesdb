@@ -6,9 +6,9 @@ import (
 )
 
 type BloomFilter struct {
-	m      uint   // Number of bits in the filter
-	k      uint   // Number of hash functions
-	bitset []byte // The bit array
+	m      uint
+	k      uint
+	bitset []byte
 }
 
 func NewBloomFilter(expectedItems uint, falsePositiveRate float64) *BloomFilter {
@@ -50,7 +50,7 @@ func (bf *BloomFilter) Test(data []byte) bool {
 		byteIndex := bitIndex / 8
 		bitOffset := bitIndex % 8
 		if bf.bitset[byteIndex]&(1<<bitOffset) == 0 {
-			return false // Definitely not in the set
+			return false
 		}
 	}
 	return true
@@ -64,10 +64,10 @@ func hash(data []byte) (uint32, uint32) {
 }
 
 type BloomFilterAllocator struct {
-	T              float64 // Base capacity ratio
-	C              float64 // Scaling factor
-	TotalMemBudget uint    // Total bits available for all bloom filters
-	NumLevels      int     // Total number of levels
+	T              float64
+	C              float64
+	TotalMemBudget uint
+	NumLevels      int
 }
 
 func NewBloomFilterAllocator(t float64, c float64, memBudgetBytes uint, numLevels int) *BloomFilterAllocator {

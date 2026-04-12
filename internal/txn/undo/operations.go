@@ -7,18 +7,12 @@ import (
 	"github.com/rodrigo0345/omag/internal/storage/page"
 )
 
-// Operation represents a reversible database operation
-// Implementations must be safe for concurrent Undo() calls
 type Operation interface {
-	// Undo reverts this operation to its previous state
 	Undo(bufferMgr buffer.IBufferPoolManager) error
 
-	// GetID returns unique operation identifier
 	GetID() uint64
 }
 
-// PageWriteOp represents a single page modification
-// Stores before-image data to restore page state on abort
 type PageWriteOp struct {
 	opID       uint64
 	pageID     page.ResourcePageID
@@ -26,9 +20,7 @@ type PageWriteOp struct {
 	beforeData []byte
 }
 
-// NewPageWriteOp creates a page write operation with before-image
 func NewPageWriteOp(opID uint64, pageID page.ResourcePageID, offset uint16, beforeData []byte) *PageWriteOp {
-	// Copy to avoid external mutations
 	dataCopy := make([]byte, len(beforeData))
 	copy(dataCopy, beforeData)
 
@@ -40,7 +32,6 @@ func NewPageWriteOp(opID uint64, pageID page.ResourcePageID, offset uint16, befo
 	}
 }
 
-// Undo restores the page to its pre-write state
 func (op *PageWriteOp) Undo(bufferMgr buffer.IBufferPoolManager) error {
 	page, err := bufferMgr.PinPage(op.pageID)
 	if err != nil {
@@ -76,13 +67,11 @@ func (op *PageWriteOp) GetBeforeImage() []byte {
 	return dataCopy
 }
 
-// CompositeOp groups multiple operations for atomic undo
 type CompositeOp struct {
 	opID       uint64
 	operations []Operation
 }
 
-// NewCompositeOp creates an operation that groups other operations
 func NewCompositeOp(opID uint64, ops ...Operation) *CompositeOp {
 	opsCopy := make([]Operation, len(ops))
 	copy(opsCopy, ops)
@@ -93,7 +82,6 @@ func NewCompositeOp(opID uint64, ops ...Operation) *CompositeOp {
 	}
 }
 
-// Undo reverts all child operations in reverse order
 func (cop *CompositeOp) Undo(bufferMgr buffer.IBufferPoolManager) error {
 	for i := len(cop.operations) - 1; i >= 0; i-- {
 		op := cop.operations[i]

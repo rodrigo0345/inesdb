@@ -8,7 +8,6 @@ import (
 	"github.com/rodrigo0345/omag/internal/storage/page"
 )
 
-// TestNewDiskManager_Success tests successful disk manager creation
 func TestNewDiskManager_Success(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
@@ -27,7 +26,6 @@ func TestNewDiskManager_Success(t *testing.T) {
 	}
 }
 
-// TestNewDiskManager_InvalidPath tests disk manager creation with invalid path
 func TestNewDiskManager_InvalidPath(t *testing.T) {
 	invalidPath := "/nonexistent/directory/that/does/not/exist/file.db"
 	_, err := NewDiskManager(invalidPath)
@@ -36,22 +34,18 @@ func TestNewDiskManager_InvalidPath(t *testing.T) {
 	}
 }
 
-// TestNewDiskManager_ExistingFile tests disk manager with pre-existing file
 func TestNewDiskManager_ExistingFile(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
 
-	// Create an empty file first
 	if err := os.WriteFile(dbFile, []byte{}, 0666); err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
 
-	// Write some data to file to simulate existing pages
 	file, err := os.OpenFile(dbFile, os.O_WRONLY, 0666)
 	if err != nil {
 		t.Fatalf("failed to open file: %v", err)
 	}
-	// Write 2 pages worth of data
 	data := make([]byte, page.PageSize*2)
 	file.Write(data)
 	file.Close()
@@ -62,13 +56,11 @@ func TestNewDiskManager_ExistingFile(t *testing.T) {
 	}
 	defer dm.Close()
 
-	// Should detect 2 existing pages
 	if dm.nextPage != 2 {
 		t.Fatalf("expected nextPage 2 for 2-page file, got %d", dm.nextPage)
 	}
 }
 
-// TestReadPage_Success tests successful page read
 func TestReadPage_Success(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
@@ -76,17 +68,14 @@ func TestReadPage_Success(t *testing.T) {
 	dm, _ := NewDiskManager(dbFile)
 	defer dm.Close()
 
-	// Write a test page first
 	testData := make([]byte, page.PageSize)
 	testData[0] = 42
 	testData[page.PageSize-1] = 99
 
 	dm.WritePage(0, testData)
 
-	// Flush to ensure write is on disk before reading
 	dm.Flush()
 
-	// Read it back
 	readData := make([]byte, page.PageSize)
 	err := dm.ReadPage(0, readData)
 	if err != nil {
@@ -101,7 +90,6 @@ func TestReadPage_Success(t *testing.T) {
 	}
 }
 
-// TestReadPage_Closed tests reading from a closed disk manager
 func TestReadPage_Closed(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
@@ -116,7 +104,6 @@ func TestReadPage_Closed(t *testing.T) {
 	}
 }
 
-// TestWritePage_Success tests successful page write
 func TestWritePage_Success(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
@@ -134,13 +121,11 @@ func TestWritePage_Success(t *testing.T) {
 		t.Fatalf("failed to write page: %v", err)
 	}
 
-	// Flush to ensure write is on disk
 	err = dm.Flush()
 	if err != nil {
 		t.Fatalf("failed to flush: %v", err)
 	}
 
-	// Verify file size
 	stat, err := os.Stat(dbFile)
 	if err != nil {
 		t.Fatalf("failed to stat file: %v", err)
@@ -150,7 +135,6 @@ func TestWritePage_Success(t *testing.T) {
 	}
 }
 
-// TestWritePage_SizeMismatch tests writing with wrong page size
 func TestWritePage_SizeMismatch(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
@@ -165,7 +149,6 @@ func TestWritePage_SizeMismatch(t *testing.T) {
 	}
 }
 
-// TestWritePage_Closed tests writing to a closed disk manager
 func TestWritePage_Closed(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
@@ -180,7 +163,6 @@ func TestWritePage_Closed(t *testing.T) {
 	}
 }
 
-// TestAllocatePage tests page allocation
 func TestAllocatePage(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
@@ -204,7 +186,6 @@ func TestAllocatePage(t *testing.T) {
 	}
 }
 
-// TestSync tests flushing data to disk
 func TestSync_Success(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
@@ -222,7 +203,6 @@ func TestSync_Success(t *testing.T) {
 	}
 }
 
-// TestSync_Closed tests syncing a closed disk manager
 func TestSync_Closed(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
@@ -236,7 +216,6 @@ func TestSync_Closed(t *testing.T) {
 	}
 }
 
-// TestClose tests disk manager closure
 func TestClose_Success(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
@@ -247,7 +226,6 @@ func TestClose_Success(t *testing.T) {
 		t.Fatalf("failed to close: %v", err)
 	}
 
-	// File handle is closed (attempting operations will fail)
 	data := make([]byte, page.PageSize)
 	err = dm.ReadPage(0, data)
 	if err == nil {
@@ -255,7 +233,6 @@ func TestClose_Success(t *testing.T) {
 	}
 }
 
-// TestClose_AlreadyClosed tests closing an already closed disk manager
 func TestClose_AlreadyClosed(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
@@ -263,11 +240,8 @@ func TestClose_AlreadyClosed(t *testing.T) {
 	dm, _ := NewDiskManager(dbFile)
 	dm.Close()
 
-	// Closing again may error (file already closed)
-	// This is acceptable behavior - we just verify the first close worked
 }
 
-// TestMultiplePages tests read/write operations on multiple pages
 func TestMultiplePages(t *testing.T) {
 	dbFile := getTempDbFile(t)
 	defer os.Remove(dbFile)
@@ -275,7 +249,6 @@ func TestMultiplePages(t *testing.T) {
 	dm, _ := NewDiskManager(dbFile)
 	defer dm.Close()
 
-	// Write 5 pages
 	pages := 5
 	for i := 0; i < pages; i++ {
 		data := make([]byte, page.PageSize)
@@ -283,10 +256,8 @@ func TestMultiplePages(t *testing.T) {
 		dm.WritePage(page.ResourcePageID(i), data)
 	}
 
-	// Flush to ensure all writes are on disk
 	dm.Flush()
 
-	// Read them back and verify
 	for i := 0; i < pages; i++ {
 		data := make([]byte, page.PageSize)
 		dm.ReadPage(page.ResourcePageID(i), data)
@@ -296,7 +267,6 @@ func TestMultiplePages(t *testing.T) {
 	}
 }
 
-// Helper function to get temp db file
 func getTempDbFile(t *testing.T) string {
 	tmpDir := t.TempDir()
 	return filepath.Join(tmpDir, "test.db")

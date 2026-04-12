@@ -5,26 +5,19 @@ import (
 	"sync"
 )
 
-// SchemaManager manages table schemas with persistence
-// It uses the storage engine to persist schemas
 type SchemaManager struct {
 	schemas map[string]*TableSchema
 	mu      sync.RWMutex
 
-	// storageBackend is the pluggable storage engine (B+Tree or LSM)
-	// We use a generic interface to support both
 	storageBackend interface {
 		Put(key []byte, value []byte) error
 		Get(key []byte) ([]byte, error)
 		Delete(key []byte) error
 	}
 
-	// schemaNamespace is the prefix for all schema keys
-	// Format: "__schema:<table_name>"
 	schemaNamespace string
 }
 
-// NewSchemaManager creates a new schema manager
 func NewSchemaManager(storageBackend interface {
 	Put(key []byte, value []byte) error
 	Get(key []byte) ([]byte, error)
@@ -37,8 +30,6 @@ func NewSchemaManager(storageBackend interface {
 	}
 }
 
-// CreateTable creates a new table with the given schema
-// Returns an error if the table already exists
 func (sm *SchemaManager) CreateTable(schema *TableSchema) error {
 	if err := schema.Validate(); err != nil {
 		return fmt.Errorf("invalid schema: %w", err)
@@ -51,7 +42,6 @@ func (sm *SchemaManager) CreateTable(schema *TableSchema) error {
 		return fmt.Errorf("table %q already exists", schema.Name)
 	}
 
-	// Persist to storage
 	schemaJSON, err := schema.ToJSON()
 	if err != nil {
 		return err
@@ -66,7 +56,6 @@ func (sm *SchemaManager) CreateTable(schema *TableSchema) error {
 	return nil
 }
 
-// DropTable drops a table and its schema
 func (sm *SchemaManager) DropTable(tableName string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -75,7 +64,6 @@ func (sm *SchemaManager) DropTable(tableName string) error {
 		return fmt.Errorf("table %q does not exist", tableName)
 	}
 
-	// Delete from storage
 	key := sm.getSchemaKey(tableName)
 	if err := sm.storageBackend.Delete(key); err != nil {
 		return fmt.Errorf("failed to delete schema: %w", err)
@@ -85,7 +73,6 @@ func (sm *SchemaManager) DropTable(tableName string) error {
 	return nil
 }
 
-// GetTable retrieves a table schema by name
 func (sm *SchemaManager) GetTable(tableName string) (*TableSchema, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -98,8 +85,6 @@ func (sm *SchemaManager) GetTable(tableName string) (*TableSchema, error) {
 	return schema, nil
 }
 
-// LoadSchema loads a schema from storage
-// Used during initialization to restore schemas from disk
 func (sm *SchemaManager) LoadSchema(tableName string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -123,19 +108,13 @@ func (sm *SchemaManager) LoadSchema(tableName string) error {
 	return nil
 }
 
-// LoadAllSchemas loads all schemas from storage
-// Used during initialization
 func (sm *SchemaManager) LoadAllSchemas() ([]string, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	// For now, return empty - this would require a scan operation
-	// In a future iteration, we can implement schema enumeration
-	// This might require an iterator interface on the storage backend
 	return nil, fmt.Errorf("LoadAllSchemas not implemented - requires storage engine iterator support")
 }
 
-// UpdateTable updates a table schema
 func (sm *SchemaManager) UpdateTable(schema *TableSchema) error {
 	if err := schema.Validate(); err != nil {
 		return fmt.Errorf("invalid schema: %w", err)
@@ -148,7 +127,6 @@ func (sm *SchemaManager) UpdateTable(schema *TableSchema) error {
 		return fmt.Errorf("table %q does not exist", schema.Name)
 	}
 
-	// Persist to storage
 	schemaJSON, err := schema.ToJSON()
 	if err != nil {
 		return err
@@ -163,7 +141,6 @@ func (sm *SchemaManager) UpdateTable(schema *TableSchema) error {
 	return nil
 }
 
-// AddIndex adds an index to a table schema
 func (sm *SchemaManager) AddIndex(tableName string, indexName string, indexType IndexType, columns []string, isUnique bool) error {
 	sm.mu.Lock()
 	schema, exists := sm.schemas[tableName]
@@ -177,11 +154,9 @@ func (sm *SchemaManager) AddIndex(tableName string, indexName string, indexType 
 		return err
 	}
 
-	// Update schema in storage
 	return sm.UpdateTable(schema)
 }
 
-// RemoveIndex removes an index from a table schema
 func (sm *SchemaManager) RemoveIndex(tableName string, indexName string) error {
 	sm.mu.Lock()
 	schema, exists := sm.schemas[tableName]
@@ -198,11 +173,9 @@ func (sm *SchemaManager) RemoveIndex(tableName string, indexName string) error {
 	delete(schema.Indexes, indexName)
 	sm.mu.Unlock()
 
-	// Update schema in storage
 	return sm.UpdateTable(schema)
 }
 
-// ListTables returns all table names
 func (sm *SchemaManager) ListTables() []string {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -215,7 +188,6 @@ func (sm *SchemaManager) ListTables() []string {
 	return tables
 }
 
-// TableExists checks if a table exists
 func (sm *SchemaManager) TableExists(tableName string) bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -224,7 +196,6 @@ func (sm *SchemaManager) TableExists(tableName string) bool {
 	return exists
 }
 
-// ColumnExists checks if a column exists in a table
 func (sm *SchemaManager) ColumnExists(tableName string, columnName string) bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -238,7 +209,6 @@ func (sm *SchemaManager) ColumnExists(tableName string, columnName string) bool 
 	return exists
 }
 
-// IndexExists checks if an index exists in a table
 func (sm *SchemaManager) IndexExists(tableName string, indexName string) bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -252,7 +222,6 @@ func (sm *SchemaManager) IndexExists(tableName string, indexName string) bool {
 	return exists
 }
 
-// GetPrimaryKeyColumn returns the primary key column of a table
 func (sm *SchemaManager) GetPrimaryKeyColumn(tableName string) (string, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -265,17 +234,14 @@ func (sm *SchemaManager) GetPrimaryKeyColumn(tableName string) (string, error) {
 	return schema.PrimaryKey, nil
 }
 
-// getSchemaKey returns the storage key for a table schema
 func (sm *SchemaManager) getSchemaKey(tableName string) []byte {
 	return []byte(sm.schemaNamespace + tableName)
 }
 
-// GetSchemaNamespace returns the namespace prefix used for storing schemas
 func (sm *SchemaManager) GetSchemaNamespace() string {
 	return sm.schemaNamespace
 }
 
-// IsSchemaKey checks if a key is a schema key
 func (sm *SchemaManager) IsSchemaKey(key []byte) bool {
 	keyStr := string(key)
 	return len(keyStr) > len(sm.schemaNamespace) && keyStr[:len(sm.schemaNamespace)] == sm.schemaNamespace

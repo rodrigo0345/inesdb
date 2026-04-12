@@ -8,7 +8,6 @@ import (
 	"github.com/rodrigo0345/omag/internal/txn/log"
 )
 
-// mockIsolationManager implements IIsolationManager for testing
 type mockIsolationManager struct{}
 
 func (m *mockIsolationManager) BeginTransaction(isolationLevel uint8, tableName string, tableSchema *schema.TableSchema) int64 {
@@ -35,7 +34,6 @@ func (m *mockIsolationManager) Close() error {
 	return nil
 }
 
-// mockLogManager implements ILogManager for testing
 type mockLogManager struct{}
 
 func (m *mockLogManager) AppendLogRecord(record log.ILogRecord) (log.LSN, error) {
@@ -66,7 +64,6 @@ func (m *mockLogManager) ReadAllRecords() ([]log.WALRecord, error) {
 	return nil, nil
 }
 
-// mockStorageEngine implements StorageEngine for testing
 type mockStorageEngine struct{}
 
 func (m *mockStorageEngine) Get(key []byte) ([]byte, error) {
@@ -85,7 +82,6 @@ func (m *mockStorageEngine) Scan() ([]storage.ScanEntry, error) {
 	return []storage.ScanEntry{}, nil
 }
 
-// TestNewTransactionManager tests creating a transaction manager
 func TestNewTransactionManager(t *testing.T) {
 	mockIsolMgr := &mockIsolationManager{}
 	mockLogMgr := &mockLogManager{}
@@ -99,7 +95,6 @@ func TestNewTransactionManager(t *testing.T) {
 	}
 }
 
-// TestNewTransactionManagerWithoutLog tests creating manager without log
 func TestNewTransactionManagerWithoutLog(t *testing.T) {
 	mockIsolMgr := &mockIsolationManager{}
 	mockBufMgr := &mockBufferPoolManager{}
@@ -112,7 +107,6 @@ func TestNewTransactionManagerWithoutLog(t *testing.T) {
 	}
 }
 
-// TestGetRollbackManager tests retrieving rollback manager
 func TestGetRollbackManager(t *testing.T) {
 	mockIsolMgr := &mockIsolationManager{}
 	mockLogMgr := &mockLogManager{}
@@ -127,7 +121,6 @@ func TestGetRollbackManager(t *testing.T) {
 	}
 }
 
-// TestGetWriteHandler tests retrieving write handler
 func TestGetWriteHandler(t *testing.T) {
 	mockIsolMgr := &mockIsolationManager{}
 	mockLogMgr := &mockLogManager{}
@@ -142,7 +135,6 @@ func TestGetWriteHandler(t *testing.T) {
 	}
 }
 
-// TestTransactionManagerIntegration tests integration of components
 func TestTransactionManagerIntegration(t *testing.T) {
 	mockIsolMgr := &mockIsolationManager{}
 	mockLogMgr := &mockLogManager{}
@@ -151,7 +143,6 @@ func TestTransactionManagerIntegration(t *testing.T) {
 
 	tm := NewTransactionManager(mockIsolMgr, mockLogMgr, mockBufMgr, mockStorage)
 
-	// Should have all components available
 	if tm.GetRollbackManager() == nil {
 		t.Error("rollback manager should not be nil")
 	}
@@ -161,7 +152,6 @@ func TestTransactionManagerIntegration(t *testing.T) {
 	}
 }
 
-// TestTransactionManagerMultiple tests creating multiple managers
 func TestTransactionManagerMultiple(t *testing.T) {
 	mockIsolMgr := &mockIsolationManager{}
 	mockLogMgr := &mockLogManager{}
@@ -176,17 +166,14 @@ func TestTransactionManagerMultiple(t *testing.T) {
 	}
 }
 
-// TestTransactionManagerWithDifferentIsolationLevels tests with various isolation levels
 func TestTransactionManagerWithDifferentIsolationLevels(t *testing.T) {
 	mockIsolMgr := &mockIsolationManager{}
 	mockLogMgr := &mockLogManager{}
 	mockBufMgr := &mockBufferPoolManager{}
 	mockStorage := &mockStorageEngine{}
 
-	// Create transaction manager
 	tm := NewTransactionManager(mockIsolMgr, mockLogMgr, mockBufMgr, mockStorage)
 
-	// Manager should work regardless of isolation level
 	if tm == nil {
 		t.Error("expected manager to be created successfully")
 	}

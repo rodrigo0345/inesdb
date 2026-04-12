@@ -25,7 +25,6 @@ func TestGarneringCompactionPolicy_InvalidCParameter(t *testing.T) {
 		t.Fatalf("expected C to default to 0.5 when > 1.0, got %f", policy1.C)
 	}
 
-	// C <= 0 should default to 0.5
 	policy2 := NewGarneringCompactionPolicy(10.0, 0.0, 4)
 	if policy2.C != 0.5 {
 		t.Fatalf("expected C to default to 0.5 when <= 0, got %f", policy2.C)
@@ -74,12 +73,12 @@ func TestGarneringCompactionPolicy_GetNumLevels(t *testing.T) {
 		minLevel int
 		maxLevel int
 	}{
-		{100, 1, 2},      // Small dataset
-		{1000, 1, 2},     // Still small
-		{10000, 1, 3},    // Medium
-		{100000, 2, 3},   // Larger
-		{1000000, 2, 4},  // Large dataset
-		{10000000, 2, 5}, // Very large
+		{100, 1, 2},
+		{1000, 1, 2},
+		{10000, 1, 3},
+		{100000, 2, 3},
+		{1000000, 2, 4},
+		{10000000, 2, 5},
 	}
 
 	for _, tc := range testCases {
@@ -194,7 +193,7 @@ func TestBloomFilterAllocator_Creation(t *testing.T) {
 	if allocator.C != 0.5 {
 		t.Fatalf("expected C=0.5, got %f", allocator.C)
 	}
-	if allocator.TotalMemBudget != 8000000 { // 1000000 bytes * 8 bits
+	if allocator.TotalMemBudget != 8000000 {
 		t.Fatalf("expected TotalMemBudget=8000000, got %d", allocator.TotalMemBudget)
 	}
 	if allocator.NumLevels != 5 {
@@ -221,7 +220,6 @@ func TestBloomFilterAllocator_AllocateBitsPerLevel(t *testing.T) {
 		t.Fatal("total allocated bits should be > 0")
 	}
 
-	// Just verify that all levels get some allocation
 	for i, bits := range allocation {
 		if bits == 0 && itemsPerLevel[i] > 0 {
 			t.Logf("Level %d has zero allocation (items=%d)", i, itemsPerLevel[i])
@@ -255,7 +253,6 @@ func TestBloomFilterAllocator_CalculateOptimalFPR(t *testing.T) {
 	}
 }
 
-// Test: FPR decreases toward lower levels
 func TestBloomFilterAllocator_FPRGradient(t *testing.T) {
 	allocator := NewBloomFilterAllocator(10.0, 0.5, 1000000, 5)
 

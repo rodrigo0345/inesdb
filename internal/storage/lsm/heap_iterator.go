@@ -8,7 +8,7 @@ func (h iterHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
 func (h iterHeap) Less(i, j int) bool {
 	ki, kj := h[i].key(), h[j].key()
 	if ki != kj {
-		return ki < kj // min-heap on key
+		return ki < kj
 	}
 	return h[i].priority > h[j].priority
 }

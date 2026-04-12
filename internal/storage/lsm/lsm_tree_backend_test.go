@@ -11,9 +11,7 @@ import (
 	"github.com/rodrigo0345/omag/internal/txn/log"
 )
 
-// Helper function to create a mock LSM tree for testing
 func createTestLSM(t *testing.T) *LSMTreeBackend {
-	// Create mock implementations
 	mockLogMgr := &mockLogManager{}
 	mockBufMgr := &mockBufferManager{}
 
@@ -317,7 +315,6 @@ func TestLSMTreeBackend_LargeValues(t *testing.T) {
 	}
 }
 
-// Test: Empty keys and values
 func TestLSMTreeBackend_EdgeCases(t *testing.T) {
 	lsm := createTestLSM(t)
 
@@ -327,7 +324,6 @@ func TestLSMTreeBackend_EdgeCases(t *testing.T) {
 		t.Fatalf("expected empty value, got %v", retrieved)
 	}
 
-	// Special characters in key
 	specialKey := []byte("key\x00\xFF\x01")
 	lsm.Put(specialKey, []byte("specialvalue"))
 	retrieved, _ = lsm.Get(specialKey)
@@ -352,23 +348,19 @@ func TestLSMTreeBackend_TotalItemsTracking(t *testing.T) {
 	}
 }
 
-// Test: Cascading compaction
 func TestLSMTreeBackend_CascadingCompaction(t *testing.T) {
 	lsm := createTestLSM(t)
 
-	// Insert enough items to cause compaction cascading through multiple levels
 	itemCount := SSTableMaxSize * 5
 	for i := 0; i < itemCount; i++ {
 		key := []byte(fmt.Sprintf("cascadekey%d", i))
 		lsm.Put(key, []byte("cascadevalue"))
 	}
 
-	// Should have multiple levels due to cascading
 	if len(lsm.levels) < 2 {
 		t.Fatalf("expected at least 2 levels after cascading compaction, got %d", len(lsm.levels))
 	}
 
-	// All keys should still be retrievable
 	for i := 0; i < itemCount; i++ {
 		key := []byte(fmt.Sprintf("cascadekey%d", i))
 		_, err := lsm.Get(key)
