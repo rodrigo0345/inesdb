@@ -7,6 +7,7 @@ import (
 
 	wallog "github.com/rodrigo0345/omag/internal/txn/log"
 	"github.com/rodrigo0345/omag/internal/txn/testutil"
+	"github.com/rodrigo0345/omag/internal/txn/write_handler"
 )
 
 func TestNewTransactionManagerWithWAL(t *testing.T) {
@@ -75,7 +76,7 @@ func TestGetWriteHandlerWithWAL(t *testing.T) {
 		t.Fatal("expected non-nil write handler")
 	}
 
-	_, ok := wh.(*DefaultWriteHandler)
+	_, ok := wh.(*write_handler.DefaultWriteHandler)
 	if !ok {
 		t.Error("expected DefaultWriteHandler when WAL is provided")
 	}
@@ -95,7 +96,7 @@ func TestGetWriteHandlerWithoutWAL(t *testing.T) {
 		t.Fatal("expected non-nil write handler")
 	}
 
-	_, ok := wh.(*MVCCWriteHandler)
+	_, ok := wh.(*write_handler.MVCCWriteHandler)
 	if !ok {
 		t.Error("expected MVCCWriteHandler when WAL is not provided")
 	}

@@ -8,21 +8,23 @@ import (
 	"github.com/rodrigo0345/omag/internal/storage"
 	"github.com/rodrigo0345/omag/internal/storage/buffer"
 	"github.com/rodrigo0345/omag/internal/storage/schema"
-	"github.com/rodrigo0345/omag/internal/txn"
 	"github.com/rodrigo0345/omag/internal/txn/lock"
 	"github.com/rodrigo0345/omag/internal/txn/log"
+	"github.com/rodrigo0345/omag/internal/txn/rollback"
+	"github.com/rodrigo0345/omag/internal/txn/txn_unit"
+	"github.com/rodrigo0345/omag/internal/txn/write_handler"
 )
 
 type TransactionID uint64
 
 type TwoPhaseLockingManager struct {
 	mu              sync.RWMutex
-	transactions    map[TransactionID]*txn.Transaction
+	transactions    map[TransactionID]*txn_unit.Transaction
 	lockManager     *lock.LockManager
 	logManager      log.ILogManager
 	bufferManager   buffer.IBufferPoolManager
-	writeHandler    txn.WriteHandler
-	rollbackManager *txn.RollbackManager
+	writeHandler    write_handler.IWriteHandler
+	rollbackManager *rollback.RollbackManager
 	primaryIndex    storage.IStorageEngine
 	indexManagers   map[string]*schema.SecondaryIndexManager
 }
@@ -30,13 +32,13 @@ type TwoPhaseLockingManager struct {
 func NewTwoPhaseLockingManager(
 	logManager log.ILogManager,
 	bufferMgr buffer.IBufferPoolManager,
-	writeHandler txn.WriteHandler,
-	rollbackMgr *txn.RollbackManager,
+	writeHandler write_handler.IWriteHandler,
+	rollbackMgr *rollback.RollbackManager,
 	primaryIndex storage.IStorageEngine,
 	indexManagers map[string]*schema.SecondaryIndexManager,
 ) *TwoPhaseLockingManager {
 	return &TwoPhaseLockingManager{
-		transactions:    make(map[TransactionID]*txn.Transaction),
+		transactions:    make(map[TransactionID]*txn_unit.Transaction),
 		lockManager:     lock.NewLockManager(),
 		logManager:      logManager,
 		bufferManager:   bufferMgr,
@@ -52,7 +54,7 @@ func (m *TwoPhaseLockingManager) BeginTransaction(isolationLevel uint8, tableNam
 	defer m.mu.Unlock()
 
 	txnID := int64(len(m.transactions) + 1)
-	txn := txn.NewTransaction(uint64(txnID), isolationLevel)
+	txn := txn_unit.NewTransaction(uint64(txnID), isolationLevel)
 	txn.SetTableContext(tableName, tableSchema)
 	m.transactions[TransactionID(txnID)] = txn
 	return txnID
@@ -68,11 +70,11 @@ func (m *TwoPhaseLockingManager) Read(txnID int64, Key []byte) ([]byte, error) {
 	}
 
 	switch transaction.GetIsolationLevel() {
-	case txn.READ_UNCOMMITTED:
+	case txn_unit.READ_UNCOMMITTED:
 
 		return m.primaryIndex.Get(Key)
 
-	case txn.READ_COMMITTED:
+	case txn_unit.READ_COMMITTED:
 
 		if err := m.lockManager.LockShared(transaction, Key); err != nil {
 			return nil, err
@@ -81,14 +83,14 @@ func (m *TwoPhaseLockingManager) Read(txnID int64, Key []byte) ([]byte, error) {
 
 		return m.primaryIndex.Get(Key)
 
-	case txn.REPEATABLE_READ:
+	case txn_unit.REPEATABLE_READ:
 
 		if err := m.lockManager.LockShared(transaction, Key); err != nil {
 			return nil, err
 		}
 		return m.primaryIndex.Get(Key)
 
-	case txn.SERIALIZABLE:
+	case txn_unit.SERIALIZABLE:
 
 		if err := m.lockManager.LockShared(transaction, Key); err != nil {
 			return nil, err
@@ -127,7 +129,7 @@ func (m *TwoPhaseLockingManager) Write(txnID int64, Key []byte, Value []byte) er
 		}
 	}
 
-	writeOp := txn.WriteOperation{
+	writeOp := write_handler.WriteOperation{
 		Key:        Key,
 		Value:      Value,
 		PageID:     0,
@@ -225,12 +227,12 @@ func makeIndexLockKey(tableName, indexName string, indexValue []byte) []byte {
 	return buf.Bytes()
 }
 
-func (m *TwoPhaseLockingManager) acquireIndexLocks(transaction *txn.Transaction, tableName string, tableSchema *schema.TableSchema, rowData []byte) error {
+func (m *TwoPhaseLockingManager) acquireIndexLocks(transaction *txn_unit.Transaction, tableName string, tableSchema *schema.TableSchema, rowData []byte) error {
 	if tableSchema == nil || len(tableSchema.Indexes) == 0 {
 		return nil
 	}
 
-	indexValues, err := txn.ExtractIndexValues(tableSchema, rowData)
+	indexValues, err := schema.ExtractIndexValues(tableSchema, rowData)
 	if err != nil {
 		return fmt.Errorf("failed to extract index values for locking: %w", err)
 	}
@@ -245,12 +247,12 @@ func (m *TwoPhaseLockingManager) acquireIndexLocks(transaction *txn.Transaction,
 	return nil
 }
 
-func (m *TwoPhaseLockingManager) releaseIndexLocks(transaction *txn.Transaction, tableName string, tableSchema *schema.TableSchema, rowData []byte) error {
+func (m *TwoPhaseLockingManager) releaseIndexLocks(transaction *txn_unit.Transaction, tableName string, tableSchema *schema.TableSchema, rowData []byte) error {
 	if tableSchema == nil || len(tableSchema.Indexes) == 0 {
 		return nil
 	}
 
-	indexValues, err := txn.ExtractIndexValues(tableSchema, rowData)
+	indexValues, err := schema.ExtractIndexValues(tableSchema, rowData)
 	if err != nil {
 		return fmt.Errorf("failed to extract index values for lock release: %w", err)
 	}

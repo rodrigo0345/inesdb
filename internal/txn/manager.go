@@ -8,14 +8,16 @@ import (
 	"github.com/rodrigo0345/omag/internal/storage"
 	"github.com/rodrigo0345/omag/internal/storage/buffer"
 	wallog "github.com/rodrigo0345/omag/internal/txn/log"
+	"github.com/rodrigo0345/omag/internal/txn/rollback"
+	"github.com/rodrigo0345/omag/internal/txn/write_handler"
 )
 
 type TransactionManager struct {
 	isolationManager  IIsolationManager
 	logManager        wallog.ILogManager
 	bufferPoolManager buffer.IBufferPoolManager
-	rollbackManager   *RollbackManager
-	writeHandler      WriteHandler
+	rollbackManager   *rollback.RollbackManager
+	writeHandler      write_handler.IWriteHandler
 }
 
 func NewTransactionManager(
@@ -24,13 +26,13 @@ func NewTransactionManager(
 	bufferMgr buffer.IBufferPoolManager,
 	storage storage.IStorageEngine,
 ) *TransactionManager {
-	rollbackMgr := NewRollbackManager(bufferMgr)
+	rollbackMgr := rollback.NewRollbackManager(bufferMgr)
 
-	var writeHandler WriteHandler
+	var writeHandler write_handler.IWriteHandler
 	if logMgr != nil {
-		writeHandler = NewDefaultWriteHandler(storage, rollbackMgr, bufferMgr, logMgr)
+		writeHandler = write_handler.NewDefaultWriteHandler(storage, rollbackMgr, bufferMgr, logMgr)
 	} else {
-		writeHandler = NewMVCCWriteHandler(storage, bufferMgr, nil, rollbackMgr)
+		writeHandler = write_handler.NewMVCCWriteHandler(storage, bufferMgr, nil, rollbackMgr)
 	}
 
 	return &TransactionManager{
@@ -42,11 +44,11 @@ func NewTransactionManager(
 	}
 }
 
-func (tm *TransactionManager) GetRollbackManager() *RollbackManager {
+func (tm *TransactionManager) GetRollbackManager() *rollback.RollbackManager {
 	return tm.rollbackManager
 }
 
-func (tm *TransactionManager) GetWriteHandler() WriteHandler {
+func (tm *TransactionManager) GetWriteHandler() write_handler.IWriteHandler {
 	return tm.writeHandler
 }
 

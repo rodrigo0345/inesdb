@@ -1,11 +1,15 @@
-package main
+package maelstrom
 
 import (
-"bufio"
-"encoding/json"
-"fmt"
-"os"
-"sync"
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sync"
+
+	"github.com/rodrigo0345/omag/cmd/cli"
+	"github.com/rodrigo0345/omag/internal/txn"
+	"github.com/rodrigo0345/omag/internal/txn/txn_unit"
 )
 
 // MaelstromMessage represents a Maelstrom protocol message
@@ -21,16 +25,14 @@ type Node struct {
 	msgID   int
 	msgIDMu sync.Mutex
 
-	// Local state for transactions
-	stateMu sync.Mutex
-	state   map[string]any
+	txnManager txn.IIsolationManager
+	lsmStorageEngine *cli.LSMStorageEngine
 }
 
 // NewNode creates a new Maelstrom node
 func NewNode() *Node {
 	return &Node{
 		msgID: 0,
-		state: make(map[string]any),
 	}
 }
 
@@ -49,6 +51,11 @@ func (n *Node) Start() error {
 		}
 
 		if msgType == "init" {
+
+			lsmStorageEngine, txnManager := cli.NewLSMStorageEngine()
+			n.lsmStorageEngine = lsmStorageEngine
+			n.txnManager = txnManager
+
 			nodeID, _ := msg.Body["node_id"].(string)
 			n.nodeID = nodeID
 			response := MaelstromMessage{
@@ -86,10 +93,9 @@ func (n *Node) Start() error {
 }
 
 func (n *Node) executeTxn(txnOps []any) []any {
-	n.stateMu.Lock()
-	defer n.stateMu.Unlock()
-
 	var results []any
+
+	txnID := n.txnManager.BeginTransaction(txn_unit.SERIALIZABLE, "test_table", nil)
 
 	for _, opAny := range txnOps {
 		op, ok := opAny.([]any)
@@ -107,33 +113,26 @@ func (n *Node) executeTxn(txnOps []any) []any {
 
 		switch f {
 		case "r":
-			// Read operation
-			if val, exists := n.state[k]; exists {
+			if val, err := n.txnManager.Read(txnID, []byte(k)); err == nil {
 				results = append(results, []any{"r", op[1], val})
 			} else {
 				results = append(results, []any{"r", op[1], nil})
 			}
 		case "w":
-			// Write operation
-			n.state[k] = v
-			results = append(results, []any{"w", op[1], v})
-		case "append":
-			// Append operation (for list-append test)
-			if current, exists := n.state[k]; exists {
-				list, ok := current.([]any)
-				if ok {
-					// We must append to a new slice to avoid mutating shared array references during json serialization
-					newList := make([]any, len(list), len(list)+1)
-					copy(newList, list)
-					newList = append(newList, v)
-					n.state[k] = newList
-				}
-			} else {
-				n.state[k] = []any{v}
+			byteData, err := json.Marshal(results)
+			if err != nil {
+				panic("Failed to marshal write value")
 			}
-			results = append(results, []any{"append", op[1], v})
+			err = n.txnManager.Write(txnID, []byte(k), byteData)
+			if err != nil {
+				results = append(results, []any{"w", op[1], nil})
+			}
+			results = append(results, []any{"w", op[1], v})
+		default:
+			panic("Operation not supported")
 		}
 	}
+	n.txnManager.Commit(txnID)
 
 	return results
 }

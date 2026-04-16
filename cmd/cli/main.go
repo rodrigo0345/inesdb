@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bufio"
@@ -16,6 +16,10 @@ import (
 	"github.com/rodrigo0345/omag/internal/txn"
 	"github.com/rodrigo0345/omag/internal/txn/isolation"
 	"github.com/rodrigo0345/omag/internal/txn/log"
+	"github.com/rodrigo0345/omag/internal/txn/recovery"
+	"github.com/rodrigo0345/omag/internal/txn/rollback"
+	"github.com/rodrigo0345/omag/internal/txn/txn_unit"
+	"github.com/rodrigo0345/omag/internal/txn/write_handler"
 )
 
 const (
@@ -77,17 +81,16 @@ func NewDatabaseTUIWithConfig(recoveryConfig RecoveryConfig) (*DatabaseTUI, erro
 	}
 
 	// Write Coordination
-	rollbackMgr := txn.NewRollbackManager(bufferPool)
+	rollbackMgr := rollback.NewRollbackManager(bufferPool)
 
 	// RECOVER PHASE: Crash recovery and state validation
 	var recoveryState *log.RecoveryState
-	var recoveryStats txn.RecoveryStats
+	var recoveryStats recovery.RecoveryStats
 
 	if !recoveryConfig.SkipRecovery {
 		fmt.Printf("\n=== CRASH RECOVERY PHASE ===\n")
 
-		// Step 1: Run recovery coordinator (WAL analysis/redo/undo + storage engine recovery)
-		recoveryCoordinator := txn.NewDefaultRecoveryCoordinator(walMgr, storageEngine, bufferPool, rollbackMgr)
+		recoveryCoordinator := recovery.NewDefaultRecoveryCoordinator(walMgr, storageEngine, bufferPool, rollbackMgr)
 		recState, err := recoveryCoordinator.RecoverFromCrash(nil)
 		if err != nil {
 			fmt.Printf("⚠ Crash recovery encountered issues: %v\n", err)
@@ -95,8 +98,7 @@ func NewDatabaseTUIWithConfig(recoveryConfig RecoveryConfig) (*DatabaseTUI, erro
 		recoveryState = recState
 		recoveryStats = recoveryCoordinator.GetRecoveryStats()
 
-		// Step 2: Validate recovered state
-		validator := txn.NewRecoveryValidator(storageEngine, bufferPool)
+		validator := recovery.NewRecoveryValidator(storageEngine, bufferPool)
 		validationResult, err := validator.ValidateRecoveredState(recoveryState)
 		if err != nil {
 			fmt.Printf("⚠ State validation failed: %v\n", err)
@@ -109,7 +111,6 @@ func NewDatabaseTUIWithConfig(recoveryConfig RecoveryConfig) (*DatabaseTUI, erro
 			}
 		}
 
-		// Step 3: Log recovery summary
 		if recoveryState != nil {
 			fmt.Printf("\nRecovery Summary:\n")
 			fmt.Printf("  Committed transactions: %d\n", len(recoveryState.CommittedTxns))
@@ -123,7 +124,6 @@ func NewDatabaseTUIWithConfig(recoveryConfig RecoveryConfig) (*DatabaseTUI, erro
 			fmt.Printf("    Duration: %dms\n", recoveryStats.Duration)
 		}
 
-		// Step 4: If recovery-only mode, exit after recovery
 		if recoveryConfig.RecoveryOnly {
 			fmt.Printf("\n=== RECOVERY COMPLETE (exiting due to --recovery-only flag) ===\n")
 			return &DatabaseTUI{
@@ -137,7 +137,7 @@ func NewDatabaseTUIWithConfig(recoveryConfig RecoveryConfig) (*DatabaseTUI, erro
 
 		fmt.Printf("=== RECOVERY PHASE COMPLETE ===\n\n")
 	}
-	writeHandler := txn.NewDefaultWriteHandler(
+	writeHandler := write_handler.NewDefaultWriteHandler(
 		storageEngine,
 		rollbackMgr,
 		bufferPool,
@@ -200,7 +200,7 @@ func (db *DatabaseTUI) Close() error {
 
 // Set key=value
 func (db *DatabaseTUI) set(key, value string) error {
-	txnID := db.isolationMgr.BeginTransaction(txn.SERIALIZABLE, "", nil)
+	txnID := db.isolationMgr.BeginTransaction(txn_unit.SERIALIZABLE, "", nil)
 	if err := db.isolationMgr.Write(txnID, []byte(key), []byte(value)); err != nil {
 		db.isolationMgr.Abort(txnID)
 		return fmt.Errorf("write failed: %w", err)
@@ -215,7 +215,7 @@ func (db *DatabaseTUI) set(key, value string) error {
 
 // Get key
 func (db *DatabaseTUI) get(key string) error {
-	txnID := db.isolationMgr.BeginTransaction(txn.READ_COMMITTED, "", nil)
+	txnID := db.isolationMgr.BeginTransaction(txn_unit.READ_COMMITTED, "", nil)
 	defer db.isolationMgr.Commit(txnID)
 
 	value, err := db.isolationMgr.Read(txnID, []byte(key))
@@ -232,7 +232,7 @@ func (db *DatabaseTUI) get(key string) error {
 
 // Delete key
 func (db *DatabaseTUI) del(key string) error {
-	txnID := db.isolationMgr.BeginTransaction(txn.SERIALIZABLE, "", nil)
+	txnID := db.isolationMgr.BeginTransaction(txn_unit.SERIALIZABLE, "", nil)
 	if err := db.isolationMgr.Write(txnID, []byte(key), []byte("")); err != nil {
 		db.isolationMgr.Abort(txnID)
 		return fmt.Errorf("delete failed: %w", err)
@@ -442,7 +442,7 @@ func (db *DatabaseTUI) setTable(table string, key string, value string) error {
 	// Create composite key: "table:key"
 	compositeKey := fmt.Sprintf("%s:%s", table, key)
 
-	txnID := db.isolationMgr.BeginTransaction(txn.SERIALIZABLE, table, tableSchema)
+	txnID := db.isolationMgr.BeginTransaction(txn_unit.SERIALIZABLE, table, tableSchema)
 	if err := db.isolationMgr.Write(txnID, []byte(compositeKey), []byte(value)); err != nil {
 		db.isolationMgr.Abort(txnID)
 		return fmt.Errorf("write failed: %w", err)
@@ -472,7 +472,7 @@ func (db *DatabaseTUI) getTable(table string, key string) error {
 	// Create composite key: "table:key"
 	compositeKey := fmt.Sprintf("%s:%s", table, key)
 
-	txnID := db.isolationMgr.BeginTransaction(txn.READ_COMMITTED, table, tableSchema)
+	txnID := db.isolationMgr.BeginTransaction(txn_unit.READ_COMMITTED, table, tableSchema)
 	defer db.isolationMgr.Commit(txnID)
 
 	value, err := db.isolationMgr.Read(txnID, []byte(compositeKey))
@@ -505,7 +505,7 @@ func (db *DatabaseTUI) delTable(table string, key string) error {
 	// Create composite key: "table:key"
 	compositeKey := fmt.Sprintf("%s:%s", table, key)
 
-	txnID := db.isolationMgr.BeginTransaction(txn.SERIALIZABLE, table, tableSchema)
+	txnID := db.isolationMgr.BeginTransaction(txn_unit.SERIALIZABLE, table, tableSchema)
 	if err := db.isolationMgr.Write(txnID, []byte(compositeKey), []byte("")); err != nil {
 		db.isolationMgr.Abort(txnID)
 		return fmt.Errorf("delete failed: %w", err)
@@ -539,7 +539,7 @@ func (db *DatabaseTUI) queryIndex(table string, indexName string, indexValue str
 		return fmt.Errorf("index %q not found: %w", indexName, err)
 	}
 
-	txnID := db.isolationMgr.BeginTransaction(txn.READ_COMMITTED, table, tableSchema)
+	txnID := db.isolationMgr.BeginTransaction(txn_unit.READ_COMMITTED, table, tableSchema)
 	defer db.isolationMgr.Commit(txnID)
 
 	primaryKeys, err := indexMgr.GetPrimaryKeysForIndexValue(indexName, []byte(indexValue))

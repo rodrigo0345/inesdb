@@ -7,17 +7,19 @@ import (
 	"github.com/rodrigo0345/omag/internal/storage"
 	"github.com/rodrigo0345/omag/internal/storage/buffer"
 	"github.com/rodrigo0345/omag/internal/storage/schema"
-	"github.com/rodrigo0345/omag/internal/txn"
 	"github.com/rodrigo0345/omag/internal/txn/log"
+	"github.com/rodrigo0345/omag/internal/txn/rollback"
+	"github.com/rodrigo0345/omag/internal/txn/txn_unit"
+	"github.com/rodrigo0345/omag/internal/txn/write_handler"
 )
 
 type MVCCManager struct {
 	mu              sync.RWMutex
-	transactions    map[TransactionID]*txn.Transaction
+	transactions    map[TransactionID]*txn_unit.Transaction
 	logManager      log.ILogManager
 	bufferManager   buffer.IBufferPoolManager
-	writeHandler    txn.WriteHandler
-	rollbackManager *txn.RollbackManager
+	writeHandler    write_handler.IWriteHandler
+	rollbackManager *rollback.RollbackManager
 	primaryIndex    storage.IStorageEngine
 	indexManagers   map[string]*schema.SecondaryIndexManager
 	nextTxnID       int64
@@ -27,13 +29,13 @@ type MVCCManager struct {
 func NewMVCCManager(
 	logMgr log.ILogManager,
 	bufferMgr buffer.IBufferPoolManager,
-	writeHandler txn.WriteHandler,
-	rollbackMgr *txn.RollbackManager,
+	writeHandler write_handler.IWriteHandler,
+	rollbackMgr *rollback.RollbackManager,
 	primaryIndex storage.IStorageEngine,
 	indexManagers map[string]*schema.SecondaryIndexManager,
 ) *MVCCManager {
 	return &MVCCManager{
-		transactions:    make(map[TransactionID]*txn.Transaction),
+		transactions:    make(map[TransactionID]*txn_unit.Transaction),
 		logManager:      logMgr,
 		bufferManager:   bufferMgr,
 		writeHandler:    writeHandler,
@@ -52,7 +54,7 @@ func (m *MVCCManager) BeginTransaction(isolationLevel uint8, tableName string, t
 	txnID := m.nextTxnID
 	m.nextTxnID++
 
-	transaction := txn.NewTransaction(uint64(txnID), isolationLevel)
+	transaction := txn_unit.NewTransaction(uint64(txnID), isolationLevel)
 	transaction.SetTableContext(tableName, tableSchema)
 	m.transactions[TransactionID(txnID)] = transaction
 
@@ -93,7 +95,7 @@ func (m *MVCCManager) Write(txnID int64, Key []byte, Value []byte) error {
 		}
 	}
 
-	writeOp := txn.WriteOperation{
+	writeOp := write_handler.WriteOperation{
 		Key:        Key,
 		Value:      Value,
 		PageID:     0,

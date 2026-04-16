@@ -7,13 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rodrigo0345/omag/internal/storage/lsm/mocks"
 	"github.com/rodrigo0345/omag/internal/storage/page"
 	"github.com/rodrigo0345/omag/internal/txn/log"
 )
 
 func createTestLSM(t *testing.T) *LSMTreeBackend {
-	mockLogMgr := &mockLogManager{}
-	mockBufMgr := &mockBufferManager{}
+	mockLogMgr := &mocks.MockLogManager{}
+	mockBufMgr := &mocks.MockBufferManager{}
 
 	lsm := NewLSMTreeBackend(mockLogMgr, mockBufMgr)
 	if lsm == nil {
