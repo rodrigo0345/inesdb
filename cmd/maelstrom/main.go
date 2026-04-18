@@ -1,4 +1,4 @@
-package maelstrom
+package main
 
 import (
 	"bufio"
@@ -100,13 +100,19 @@ func (n *Node) Start() error {
 }
 
 func (n *Node) executeTxn(txnOps []any) []any {
-	var results []any
+	results := make([]any, 0, len(txnOps))
 
 	if n.db == nil {
 		return results
 	}
 
-	txnID := n.db.BeginTransaction(txn_unit.SERIALIZABLE, "test_table", nil)
+	txnID := n.db.BeginTransaction(txn_unit.SERIALIZABLE, "", nil)
+	committed := false
+	defer func() {
+		if !committed {
+			_ = n.db.Abort(txnID)
+		}
+	}()
 
 	for _, opAny := range txnOps {
 		op, ok := opAny.([]any)
@@ -124,26 +130,38 @@ func (n *Node) executeTxn(txnOps []any) []any {
 
 		switch f {
 		case "r":
-			if val, err := n.db.Read(txnID, []byte(k)); err == nil {
-				results = append(results, []any{"r", op[1], val})
-			} else {
-				results = append(results, []any{"r", op[1], nil})
-			}
-		case "w":
-			byteData, err := json.Marshal(results)
+			val, err := n.db.Read(txnID, []byte(k))
 			if err != nil {
-				panic("Failed to marshal write value")
+				results = append(results, []any{"r", op[1], nil})
+				continue
+			}
+
+			var decoded any
+			if err := json.Unmarshal(val, &decoded); err != nil {
+				results = append(results, []any{"r", op[1], nil})
+				continue
+			}
+			results = append(results, []any{"r", op[1], decoded})
+		case "w":
+			byteData, err := json.Marshal(v)
+			if err != nil {
+				results = append(results, []any{"w", op[1], nil})
+				continue
 			}
 			err = n.db.Write(txnID, []byte(k), byteData)
 			if err != nil {
 				results = append(results, []any{"w", op[1], nil})
+				continue
 			}
 			results = append(results, []any{"w", op[1], v})
 		default:
-			panic("Operation not supported")
+			results = append(results, []any{f, op[1], nil})
 		}
 	}
-	n.db.Commit(txnID)
+	if err := n.db.Commit(txnID); err != nil {
+		return []any{}
+	}
+	committed = true
 
 	return results
 }
