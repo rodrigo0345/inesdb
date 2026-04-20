@@ -3,8 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"path/filepath"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -141,51 +141,6 @@ func TestExecuteTxn_PersistsAcrossTransactions(t *testing.T) {
 	}
 }
 
-func TestResolveRaftLeadershipFromNodeID_DefaultsFromInitNode(t *testing.T) {
-	n := NewNodeWithOptions(NodeOptions{
-		ReplicationConfig: synchronization.ReplicationConfig{
-			Strategy: synchronization.SyncStrategyRaft,
-			Backend:  synchronization.ReplicationBackendMaelstrom,
-		},
-	})
-	n.nodeID = "n7"
-	n.resolveRaftLeadershipFromNodeID()
-
-	if n.replicationConfig.LocalNodeID != "n7" {
-		t.Fatalf("LocalNodeID = %q, want n7", n.replicationConfig.LocalNodeID)
-	}
-	if n.replicationConfig.LeaderNodeID != "n0" {
-		t.Fatalf("LeaderNodeID = %q, want n0", n.replicationConfig.LeaderNodeID)
-	}
-	if n.replicationConfig.CurrentTerm != 1 {
-		t.Fatalf("CurrentTerm = %d, want 1", n.replicationConfig.CurrentTerm)
-	}
-}
-
-func TestResolveRaftLeadershipFromNodeID_PreservesExplicitValues(t *testing.T) {
-	n := NewNodeWithOptions(NodeOptions{
-		ReplicationConfig: synchronization.ReplicationConfig{
-			Strategy:     synchronization.SyncStrategyRaft,
-			Backend:      synchronization.ReplicationBackendMaelstrom,
-			LocalNodeID:  "n9",
-			LeaderNodeID: "n3",
-			CurrentTerm:  8,
-		},
-	})
-	n.nodeID = "n7"
-	n.resolveRaftLeadershipFromNodeID()
-
-	if n.replicationConfig.LocalNodeID != "n9" {
-		t.Fatalf("LocalNodeID = %q, want n9", n.replicationConfig.LocalNodeID)
-	}
-	if n.replicationConfig.LeaderNodeID != "n3" {
-		t.Fatalf("LeaderNodeID = %q, want n3", n.replicationConfig.LeaderNodeID)
-	}
-	if n.replicationConfig.CurrentTerm != 8 {
-		t.Fatalf("CurrentTerm = %d, want 8", n.replicationConfig.CurrentTerm)
-	}
-}
-
 func TestApplyRaftLeadershipUpdate_DynamicFailover(t *testing.T) {
 	n := newTestRaftNodeWithDB(t, "n2", "n2", 2)
 
@@ -197,11 +152,13 @@ func TestApplyRaftLeadershipUpdate_DynamicFailover(t *testing.T) {
 	}
 
 	txnID := n.db.BeginTransaction(1, "", nil)
-	err := n.db.Write(txnID, []byte("k"), []byte("v"))
-	if err == nil || !strings.Contains(err.Error(), "not configured") {
-		t.Fatalf("Write() during election error = %v, want leadership-not-configured", err)
+	if err := n.db.Write(txnID, []byte("k"), []byte("v")); err != nil {
+		t.Fatalf("Write() during election should remain local, got = %v", err)
 	}
-	_ = n.db.Abort(txnID)
+	err := n.db.Commit(txnID)
+	if err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("Commit() during election error = %v, want leadership-not-configured", err)
+	}
 
 	if err := n.applyRaftLeadershipUpdate(map[string]any{
 		"leader_node_id": "n3",
@@ -211,11 +168,13 @@ func TestApplyRaftLeadershipUpdate_DynamicFailover(t *testing.T) {
 	}
 
 	txnID = n.db.BeginTransaction(1, "", nil)
-	err = n.db.Write(txnID, []byte("k2"), []byte("v2"))
-	if err == nil || !strings.Contains(err.Error(), "not leader") {
-		t.Fatalf("Write() after failover error = %v, want not-leader", err)
+	if err := n.db.Write(txnID, []byte("k2"), []byte("v2")); err != nil {
+		t.Fatalf("Write() after failover should remain local, got = %v", err)
 	}
-	_ = n.db.Abort(txnID)
+	err = n.db.Commit(txnID)
+	if err == nil || !strings.Contains(err.Error(), "not leader") {
+		t.Fatalf("Commit() after failover error = %v, want not-leader", err)
+	}
 
 	err = n.applyRaftLeadershipUpdate(map[string]any{
 		"leader_node_id": "n2",
@@ -331,5 +290,70 @@ func TestForwardTxnToLeader_AndCompleteProxyTxn(t *testing.T) {
 		t.Fatalf("pendingProxies after completion = %d, want 0", len(n.pendingProxies))
 	}
 	n.pendingMu.Unlock()
+}
+
+func TestChooseInitialLeaderFromInitNodeIDs_PrefersN0(t *testing.T) {
+	leader := chooseInitialLeaderFromInitNodeIDs([]any{"n2", "n0", "n1"})
+	if leader != "n0" {
+		t.Fatalf("chooseInitialLeaderFromInitNodeIDs() = %q, want n0", leader)
+	}
+}
+
+func TestBootstrapRaftLeadershipFromInit_ConfiguresLeaderAndProxyState(t *testing.T) {
+	n := newTestRaftNodeWithDB(t, "", "", 0)
+	n.nodeID = "n1"
+	n.replicationConfig = synchronization.ReplicationConfig{
+		Strategy:     synchronization.SyncStrategyRaft,
+		Backend:      synchronization.ReplicationBackendMaelstrom,
+		ReadPolicy:   synchronization.SyncPolicySynchronous,
+		WritePolicy:  synchronization.SyncPolicyQuorum,
+		MinWriteAcks: 1,
+	}
+
+	if err := n.bootstrapRaftLeadershipFromInit(map[string]any{"node_ids": []any{"n0", "n1", "n2"}}); err != nil {
+		t.Fatalf("bootstrapRaftLeadershipFromInit() error = %v", err)
+	}
+
+	if n.replicationConfig.LocalNodeID != "n1" {
+		t.Fatalf("LocalNodeID = %q, want n1", n.replicationConfig.LocalNodeID)
+	}
+	if n.replicationConfig.LeaderNodeID != "n0" {
+		t.Fatalf("LeaderNodeID = %q, want n0", n.replicationConfig.LeaderNodeID)
+	}
+	if n.replicationConfig.CurrentTerm != 1 {
+		t.Fatalf("CurrentTerm = %d, want 1", n.replicationConfig.CurrentTerm)
+	}
+	if !n.shouldProxyTxn() {
+		t.Fatal("shouldProxyTxn() = false, want true for follower node")
+	}
+}
+
+func TestApplyRaftLeadershipUpdate_SyncsNodeReplicationConfig(t *testing.T) {
+	n := newTestRaftNodeWithDB(t, "", "", 0)
+	n.nodeID = "n2"
+	n.replicationConfig = synchronization.ReplicationConfig{
+		Strategy: synchronization.SyncStrategyRaft,
+		Backend:  synchronization.ReplicationBackendMaelstrom,
+	}
+
+	if err := n.applyRaftLeadershipUpdate(map[string]any{
+		"leader_node_id": "n2",
+		"term":           float64(5),
+	}); err != nil {
+		t.Fatalf("applyRaftLeadershipUpdate() error = %v", err)
+	}
+
+	if n.replicationConfig.LocalNodeID != "n2" {
+		t.Fatalf("LocalNodeID = %q, want n2", n.replicationConfig.LocalNodeID)
+	}
+	if n.replicationConfig.LeaderNodeID != "n2" {
+		t.Fatalf("LeaderNodeID = %q, want n2", n.replicationConfig.LeaderNodeID)
+	}
+	if n.replicationConfig.CurrentTerm != 5 {
+		t.Fatalf("CurrentTerm = %d, want 5", n.replicationConfig.CurrentTerm)
+	}
+	if n.shouldProxyTxn() {
+		t.Fatal("shouldProxyTxn() = true, want false for leader node")
+	}
 }
 

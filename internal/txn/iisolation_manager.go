@@ -5,6 +5,7 @@ import "github.com/rodrigo0345/omag/internal/storage/schema"
 // the implementation is in internal/isolation, but it was defined here to avoid circular dependencies
 type IIsolationManager interface {
 	BeginTransaction(isolationLevel uint8, tableName string, tableSchema *schema.TableSchema) int64
+	GetTransactionTableContext(txnID int64) (string, *schema.TableSchema, bool)
 	Read(txnID int64, Key []byte) ([]byte, error)
 	Write(txnID int64, Key []byte, Value []byte) error
 	Delete(txnID int64, Key []byte) error

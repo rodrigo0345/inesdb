@@ -376,7 +376,7 @@ func TestOpenMVCCLSM_SeedsTxnIDFromRecovery(t *testing.T) {
 	}
 }
 
-func TestOpenMVCCLSM_AppliesRaftLeadershipConfig(t *testing.T) {
+func TestOpenMVCCLSM_IgnoresRaftLeadershipConfigAtStartup(t *testing.T) {
 	tmp := t.TempDir()
 	engine, err := OpenMVCCLSM(Options{
 		DBPath:     filepath.Join(tmp, "db.db"),
@@ -399,14 +399,13 @@ func TestOpenMVCCLSM_AppliesRaftLeadershipConfig(t *testing.T) {
 	defer func() { _ = engine.Close() }()
 
 	txnID := engine.BeginTransaction(txn_unit.SERIALIZABLE, "", nil)
-	err = engine.Write(txnID, []byte("k"), []byte("v"))
-	if err == nil {
-		t.Fatal("expected raft leader check to reject non-leader write")
+	if err := engine.Write(txnID, []byte("k"), []byte("v")); err != nil {
+		t.Fatalf("Write() should remain local before commit, got error = %v", err)
 	}
-	if !strings.Contains(err.Error(), "not leader") {
-		t.Fatalf("Write() error = %v, want not-leader error", err)
+	err = engine.Commit(txnID)
+	if err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("Commit() error = %v, want leadership-not-configured error", err)
 	}
-	_ = engine.Abort(txnID)
 }
 
 func TestEngine_UpdateRaftLeadership_DynamicTransition(t *testing.T) {
@@ -431,19 +430,28 @@ func TestEngine_UpdateRaftLeadership_DynamicTransition(t *testing.T) {
 	}
 	defer func() { _ = engine.Close() }()
 
+	if err := engine.UpdateRaftLeadership("n2", "n2", 2); err != nil {
+		t.Fatalf("UpdateRaftLeadership(initial leader) error = %v", err)
+	}
+
 	txnID := engine.BeginTransaction(txn_unit.SERIALIZABLE, "", nil)
 	if err := engine.Write(txnID, []byte("k"), []byte("v")); err != nil {
 		t.Fatalf("Write() as leader error = %v", err)
 	}
-	_ = engine.Abort(txnID)
+	if err := engine.Commit(txnID); err != nil {
+		t.Fatalf("Commit() as leader error = %v", err)
+	}
 
 	if err := engine.UpdateRaftLeadership("n2", "", 3); err != nil {
 		t.Fatalf("UpdateRaftLeadership(leader crash) error = %v", err)
 	}
 	txnID = engine.BeginTransaction(txn_unit.SERIALIZABLE, "", nil)
-	err = engine.Write(txnID, []byte("k2"), []byte("v2"))
+	if err := engine.Write(txnID, []byte("k2"), []byte("v2")); err != nil {
+		t.Fatalf("Write() during election should remain local, got = %v", err)
+	}
+	err = engine.Commit(txnID)
 	if err == nil || !strings.Contains(err.Error(), "not configured") {
-		t.Fatalf("Write() during election error = %v, want leadership-not-configured", err)
+		t.Fatalf("Commit() during election error = %v, want leadership-not-configured", err)
 	}
 	_ = engine.Abort(txnID)
 
@@ -451,9 +459,12 @@ func TestEngine_UpdateRaftLeadership_DynamicTransition(t *testing.T) {
 		t.Fatalf("UpdateRaftLeadership(new leader) error = %v", err)
 	}
 	txnID = engine.BeginTransaction(txn_unit.SERIALIZABLE, "", nil)
-	err = engine.Write(txnID, []byte("k3"), []byte("v3"))
+	if err := engine.Write(txnID, []byte("k3"), []byte("v3")); err != nil {
+		t.Fatalf("Write() as follower should remain local, got = %v", err)
+	}
+	err = engine.Commit(txnID)
 	if err == nil || !strings.Contains(err.Error(), "not leader") {
-		t.Fatalf("Write() as follower error = %v, want not-leader", err)
+		t.Fatalf("Commit() as follower error = %v, want not-leader", err)
 	}
 	_ = engine.Abort(txnID)
 

@@ -1,0 +1,76 @@
+services:
+  omag1:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    image: omag-lab:local
+    container_name: omag1
+    command:
+      - -listen=:5432
+      - -replication-strategy=raft
+      - -replication-backend=grpc
+      - -replication-local-node-id=n1
+      - -replication-leader-node-id=n1
+      - -replication-current-term=1
+      - -replication-min-write-acks=2
+      - -replication-grpc-listen=:7000
+      - -replication-peer-nodes=n2=omag2:7000,n3=omag3:7000
+    ports:
+      - "5541:5432"
+      - "7541:7000"
+    volumes:
+      - omag1-data:/data
+
+  omag2:
+    image: omag-lab:local
+    container_name: omag2
+    command:
+      - -listen=:5432
+      - -replication-strategy=raft
+      - -replication-backend=grpc
+      - -replication-local-node-id=n2
+      - -replication-leader-node-id=n1
+      - -replication-current-term=1
+      - -replication-min-write-acks=2
+      - -replication-grpc-listen=:7000
+      - -replication-peer-nodes=n1=omag1:7000,n3=omag3:7000
+    ports:
+      - "5542:5432"
+      - "7542:7000"
+    volumes:
+      - omag2-data:/data
+
+  omag3:
+    image: omag-lab:local
+    container_name: omag3
+    command:
+      - -listen=:5432
+      - -replication-strategy=raft
+      - -replication-backend=grpc
+      - -replication-local-node-id=n3
+      - -replication-leader-node-id=n1
+      - -replication-current-term=1
+      - -replication-min-write-acks=2
+      - -replication-grpc-listen=:7000
+      - -replication-peer-nodes=n1=omag1:7000,n2=omag2:7000
+    ports:
+      - "5543:5432"
+      - "7543:7000"
+    volumes:
+      - omag3-data:/data
+
+  psql:
+    image: postgres:16-alpine
+    container_name: omag-lab-psql
+    command: ["sleep", "infinity"]
+    depends_on:
+      - omag1
+      - omag2
+      - omag3
+
+volumes:
+  omag1-data:
+  omag2-data:
+  omag3-data:
+
+

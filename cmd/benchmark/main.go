@@ -466,9 +466,6 @@ exec su-exec postgres postgres
 			"--wal", "/data/test.wal",
 			"--replication-strategy", "raft",
 			"--replication-backend", "grpc",
-			"--replication-local-node-id", nodeID,
-			"--replication-leader-node-id", "n0",
-			"--replication-current-term", "1",
 			"--replication-min-write-acks", "2",
 			"--replication-grpc-listen", ":7000",
 		)

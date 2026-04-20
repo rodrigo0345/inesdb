@@ -10,6 +10,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
+
+	"github.com/rodrigo0345/omag/internal/txn/log"
 )
 
 const (
@@ -88,8 +90,10 @@ func (i *DefaultGRPCUnaryInvoker) Invoke(ctx context.Context, endpoint NodeEndpo
 	request := grpcReplicationRequest{
 		TxnID: envelope.TxnID,
 		Op:    string(envelope.Op),
+		TableName: envelope.TableName,
 		Key:   envelope.Key,
 		Value: envelope.Value,
+		Operations: envelope.Operations,
 	}
 	var response grpcReplicationResponse
 	if err := conn.Invoke(ctx, grpcReplicateMethodName, &request, &response, grpc.ForceCodec(grpcJSONCodec{})); err != nil {
@@ -275,8 +279,10 @@ type grpcRaftServiceAPI interface {
 type grpcReplicationRequest struct {
 	TxnID int64  `json:"txn_id"`
 	Op    string `json:"op"`
+	TableName string `json:"table_name,omitempty"`
 	Key   []byte `json:"key,omitempty"`
 	Value []byte `json:"value,omitempty"`
+	Operations []log.RecoveryOperation `json:"operations,omitempty"`
 }
 
 type grpcReplicationResponse struct {
@@ -329,8 +335,10 @@ func (s *grpcReplicationService) Replicate(ctx context.Context, req *grpcReplica
 	envelope := ReplicationEnvelope{
 		TxnID: req.TxnID,
 		Op:    ReplicationOperation(req.Op),
+		TableName: req.TableName,
 		Key:   req.Key,
 		Value: req.Value,
+		Operations: req.Operations,
 	}
 	if err := s.handler(ctx, envelope); err != nil {
 		return &grpcReplicationResponse{Error: err.Error()}, nil

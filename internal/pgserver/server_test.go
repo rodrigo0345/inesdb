@@ -1,12 +1,62 @@
 package pgserver
 
 import (
+	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgproto3/v2"
 	"github.com/rodrigo0345/omag/internal/database"
+	"github.com/rodrigo0345/omag/internal/txn/log"
+	"github.com/rodrigo0345/omag/internal/txn/synchronization"
 )
+
+type capturingReplicationCoordinator struct {
+	mu      sync.Mutex
+	commits [][]log.RecoveryOperation
+}
+
+func (c *capturingReplicationCoordinator) Strategy() synchronization.SyncStrategy { return synchronization.SyncStrategyRaft }
+func (c *capturingReplicationCoordinator) Configure(config synchronization.ReplicationConfig) error {
+	_ = config
+	return nil
+}
+func (c *capturingReplicationCoordinator) ConnectNode(ctx context.Context, endpoint synchronization.NodeEndpoint) error {
+	_, _ = ctx, endpoint
+	return nil
+}
+func (c *capturingReplicationCoordinator) DisconnectNode(ctx context.Context, nodeID string) error {
+	_, _ = ctx, nodeID
+	return nil
+}
+func (c *capturingReplicationCoordinator) ConnectedNodes() []synchronization.NodeEndpoint { return nil }
+func (c *capturingReplicationCoordinator) SynchronizeRead(ctx context.Context, txnID int64, tableName string, key []byte) error {
+	_, _, _, _ = ctx, txnID, tableName, key
+	return nil
+}
+func (c *capturingReplicationCoordinator) ReplicateWrite(ctx context.Context, txnID int64, tableName string, key []byte, value []byte) error {
+	_, _, _, _, _ = ctx, txnID, tableName, key, value
+	return nil
+}
+func (c *capturingReplicationCoordinator) ReplicateDelete(ctx context.Context, txnID int64, tableName string, key []byte) error {
+	_, _, _, _ = ctx, txnID, tableName, key
+	return nil
+}
+func (c *capturingReplicationCoordinator) Commit(ctx context.Context, txnID int64, operations []log.RecoveryOperation) error {
+	_, _ = ctx, txnID
+	cloned := make([]log.RecoveryOperation, len(operations))
+	copy(cloned, operations)
+	c.mu.Lock()
+	c.commits = append(c.commits, cloned)
+	c.mu.Unlock()
+	return nil
+}
+func (c *capturingReplicationCoordinator) Abort(ctx context.Context, txnID int64) error {
+	_, _ = ctx, txnID
+	return nil
+}
+func (c *capturingReplicationCoordinator) Close() error { return nil }
 
 func TestServerExecuteSimpleRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
@@ -76,6 +126,61 @@ func TestServerExecuteSimpleRoundTrip(t *testing.T) {
 	}
 	if cc, ok := res.messages[len(res.messages)-1].(*pgproto3.CommandComplete); !ok || string(cc.CommandTag) != "SELECT 0" {
 		t.Fatalf("expected SELECT 0 command complete, got %T %#v", res.messages[len(res.messages)-1], res.messages[len(res.messages)-1])
+	}
+}
+
+func TestServerReplicatesDDLAndDMLOnlyOnCommit(t *testing.T) {
+	tmp := t.TempDir()
+	repl := &capturingReplicationCoordinator{}
+	cfg := synchronization.DefaultReplicationConfig()
+	cfg.Backend = synchronization.ReplicationBackendGRPC
+	cfg.Strategy = synchronization.SyncStrategyRaft
+
+	engine, err := database.OpenMVCCLSM(database.Options{
+		DBPath:                 filepath.Join(tmp, "db.db"),
+		LSMDataDir:             filepath.Join(tmp, "lsm"),
+		WALPath:                filepath.Join(tmp, "wal.log"),
+		BufferPoolSize:         8,
+		ReplacerCapacity:       4,
+		ReplicationConfig:      cfg,
+		ReplicationCoordinator: repl,
+	})
+	if err != nil {
+		t.Fatalf("OpenMVCCLSM() error = %v", err)
+	}
+	defer func() { _ = engine.Close() }()
+
+	srv := New(engine)
+	sess := &connSession{status: 'I'}
+
+	if _, err := srv.executeStatement(sess, "CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT)"); err != nil {
+		t.Fatalf("CREATE TABLE error = %v", err)
+	}
+	if len(repl.commits) != 1 {
+		t.Fatalf("expected 1 commit after CREATE TABLE, got %d", len(repl.commits))
+	}
+	if len(repl.commits[0]) == 0 {
+		t.Fatalf("expected CREATE_TABLE commit batch, got %#v", repl.commits[0])
+	}
+	for _, op := range repl.commits[0] {
+		if op.Type != log.CREATE_TABLE {
+			t.Fatalf("expected CREATE_TABLE commit batch, got %#v", repl.commits[0])
+		}
+	}
+
+	if _, err := srv.executeStatement(sess, "INSERT INTO users (id, name) VALUES ('user-1', 'Ada')"); err != nil {
+		t.Fatalf("INSERT error = %v", err)
+	}
+	if len(repl.commits) != 2 {
+		t.Fatalf("expected 2 commits after INSERT, got %d", len(repl.commits))
+	}
+	if len(repl.commits[1]) == 0 {
+		t.Fatalf("expected PUT commit batch, got %#v", repl.commits[1])
+	}
+	for _, op := range repl.commits[1] {
+		if op.Type != log.PUT {
+			t.Fatalf("expected PUT commit batch, got %#v", repl.commits[1])
+		}
 	}
 }
 
@@ -206,3 +311,161 @@ func TestServerPersistsCommittedDataAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestServerDropTableIfExists(t *testing.T) {
+	tmp := t.TempDir()
+
+	engine, err := database.OpenMVCCLSM(database.Options{
+		DBPath:           filepath.Join(tmp, "db.db"),
+		LSMDataDir:       filepath.Join(tmp, "lsm"),
+		WALPath:          filepath.Join(tmp, "wal.log"),
+		BufferPoolSize:   8,
+		ReplacerCapacity: 4,
+	})
+	if err != nil {
+		t.Fatalf("OpenMVCCLSM() error = %v", err)
+	}
+	defer func() { _ = engine.Close() }()
+
+	srv := New(engine)
+	sess := &connSession{status: 'I'}
+
+	// Create a table for testing
+	if _, err := srv.executeStatement(sess, "CREATE TABLE test_table (id TEXT PRIMARY KEY)"); err != nil {
+		t.Fatalf("CREATE TABLE error = %v", err)
+	}
+
+	// Drop existing table with IF EXISTS (should succeed)
+	if _, err := srv.executeStatement(sess, "DROP TABLE IF EXISTS test_table"); err != nil {
+		t.Fatalf("DROP TABLE IF EXISTS on existing table error = %v", err)
+	}
+
+	// Drop non-existent table with IF EXISTS (should succeed, not error)
+	if _, err := srv.executeStatement(sess, "DROP TABLE IF EXISTS nonexistent_table"); err != nil {
+		t.Fatalf("DROP TABLE IF EXISTS on non-existent table should not error, got = %v", err)
+	}
+
+	// Drop non-existent table WITHOUT IF EXISTS (should error)
+	if _, err := srv.executeStatement(sess, "DROP TABLE nonexistent_table"); err == nil {
+		t.Fatalf("DROP TABLE on non-existent table should error, but succeeded")
+	}
+}
+
+func TestServerCreateTableIfNotExists(t *testing.T) {
+	tmp := t.TempDir()
+
+	engine, err := database.OpenMVCCLSM(database.Options{
+		DBPath:           filepath.Join(tmp, "db.db"),
+		LSMDataDir:       filepath.Join(tmp, "lsm"),
+		WALPath:          filepath.Join(tmp, "wal.log"),
+		BufferPoolSize:   8,
+		ReplacerCapacity: 4,
+	})
+	if err != nil {
+		t.Fatalf("OpenMVCCLSM() error = %v", err)
+	}
+	defer func() { _ = engine.Close() }()
+
+	srv := New(engine)
+	sess := &connSession{status: 'I'}
+
+	// Create table with IF NOT EXISTS (should succeed)
+	if _, err := srv.executeStatement(sess, "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT)"); err != nil {
+		t.Fatalf("CREATE TABLE IF NOT EXISTS on new table error = %v", err)
+	}
+
+	// Create same table with IF NOT EXISTS again (should succeed, not error)
+	if _, err := srv.executeStatement(sess, "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT)"); err != nil {
+		t.Fatalf("CREATE TABLE IF NOT EXISTS on existing table should not error, got = %v", err)
+	}
+
+	// Create same table WITHOUT IF NOT EXISTS (should error)
+	if _, err := srv.executeStatement(sess, "CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT)"); err == nil {
+		t.Fatalf("CREATE TABLE on existing table should error, but succeeded")
+	}
+
+	// Verify the table exists and is usable
+	if _, err := srv.executeStatement(sess, "INSERT INTO users (id, name) VALUES ('test-1', 'Test User')"); err != nil {
+		t.Fatalf("INSERT into created table error = %v", err)
+	}
+}
+
+func TestServerDropIndexIfExists(t *testing.T) {
+	tmp := t.TempDir()
+
+	engine, err := database.OpenMVCCLSM(database.Options{
+		DBPath:           filepath.Join(tmp, "db.db"),
+		LSMDataDir:       filepath.Join(tmp, "lsm"),
+		WALPath:          filepath.Join(tmp, "wal.log"),
+		BufferPoolSize:   8,
+		ReplacerCapacity: 4,
+	})
+	if err != nil {
+		t.Fatalf("OpenMVCCLSM() error = %v", err)
+	}
+	defer func() { _ = engine.Close() }()
+
+	srv := New(engine)
+	sess := &connSession{status: 'I'}
+
+	// Create a table and index
+	if _, err := srv.executeStatement(sess, "CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT)"); err != nil {
+		t.Fatalf("CREATE TABLE error = %v", err)
+	}
+	if _, err := srv.executeStatement(sess, "CREATE INDEX email_idx ON users (email)"); err != nil {
+		t.Fatalf("CREATE INDEX error = %v", err)
+	}
+
+	// Drop existing index with IF EXISTS (should succeed)
+	if _, err := srv.executeStatement(sess, "DROP INDEX IF EXISTS email_idx"); err != nil {
+		t.Fatalf("DROP INDEX IF EXISTS on existing index error = %v", err)
+	}
+
+	// Drop non-existent index with IF EXISTS (should succeed, not error)
+	if _, err := srv.executeStatement(sess, "DROP INDEX IF EXISTS nonexistent_idx"); err != nil {
+		t.Fatalf("DROP INDEX IF EXISTS on non-existent index should not error, got = %v", err)
+	}
+
+	// Drop non-existent index WITHOUT IF EXISTS (should error)
+	if _, err := srv.executeStatement(sess, "DROP INDEX nonexistent_idx"); err == nil {
+		t.Fatalf("DROP INDEX on non-existent index should error, but succeeded")
+	}
+}
+
+func TestServerCreateIndexIfNotExists(t *testing.T) {
+	tmp := t.TempDir()
+
+	engine, err := database.OpenMVCCLSM(database.Options{
+		DBPath:           filepath.Join(tmp, "db.db"),
+		LSMDataDir:       filepath.Join(tmp, "lsm"),
+		WALPath:          filepath.Join(tmp, "wal.log"),
+		BufferPoolSize:   8,
+		ReplacerCapacity: 4,
+	})
+	if err != nil {
+		t.Fatalf("OpenMVCCLSM() error = %v", err)
+	}
+	defer func() { _ = engine.Close() }()
+
+	srv := New(engine)
+	sess := &connSession{status: 'I'}
+
+	// Create a table
+	if _, err := srv.executeStatement(sess, "CREATE TABLE products (id TEXT PRIMARY KEY, name TEXT)"); err != nil {
+		t.Fatalf("CREATE TABLE error = %v", err)
+	}
+
+	// Create index with IF NOT EXISTS (should succeed)
+	if _, err := srv.executeStatement(sess, "CREATE INDEX IF NOT EXISTS name_idx ON products (name)"); err != nil {
+		t.Fatalf("CREATE INDEX IF NOT EXISTS on new index error = %v", err)
+	}
+
+	// Create same index with IF NOT EXISTS again (should succeed, not error)
+	if _, err := srv.executeStatement(sess, "CREATE INDEX IF NOT EXISTS name_idx ON products (name)"); err != nil {
+		t.Fatalf("CREATE INDEX IF NOT EXISTS on existing index should not error, got = %v", err)
+	}
+
+	// Create same index WITHOUT IF NOT EXISTS (should error)
+	if _, err := srv.executeStatement(sess, "CREATE INDEX name_idx ON products (name)"); err == nil {
+		t.Fatalf("CREATE INDEX on existing index should error, but succeeded")
+	}
+}

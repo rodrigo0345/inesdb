@@ -6,18 +6,16 @@ import (
 	"io"
 	"sort"
 	"sync"
+
+	"github.com/rodrigo0345/omag/internal/txn/log"
 )
 
 // SyncStrategy defines the high-level replication topology.
 type SyncStrategy string
 
 const (
-	SyncStrategyStandalone        SyncStrategy = "standalone"
-	SyncStrategyLeaderFollower    SyncStrategy = "leader-follower"
-	SyncStrategyMultiLeader       SyncStrategy = "multi-leader"
-	SyncStrategyQuorum            SyncStrategy = "quorum"
-	SyncStrategyRaft              SyncStrategy = "raft"
-	SyncStrategyStrongConsistency SyncStrategy = "strong-consistency"
+	SyncStrategyStandalone SyncStrategy = "standalone"
+	SyncStrategyRaft       SyncStrategy = "raft"
 )
 
 // SyncPolicy defines how strictly reads/writes synchronize across nodes.
@@ -76,7 +74,7 @@ func (c ReplicationConfig) Validate() error {
 	}
 
 	switch c.Strategy {
-	case SyncStrategyStandalone, SyncStrategyLeaderFollower, SyncStrategyMultiLeader, SyncStrategyQuorum, SyncStrategyRaft, SyncStrategyStrongConsistency:
+	case SyncStrategyStandalone, SyncStrategyRaft:
 	default:
 		return fmt.Errorf("invalid sync strategy %q", c.Strategy)
 	}
@@ -122,10 +120,10 @@ type ReplicationCoordinator interface {
 	Strategy() SyncStrategy
 	Configure(config ReplicationConfig) error
 
-	SynchronizeRead(ctx context.Context, txnID int64, key []byte) error
-	ReplicateWrite(ctx context.Context, txnID int64, key []byte, value []byte) error
-	ReplicateDelete(ctx context.Context, txnID int64, key []byte) error
-	Commit(ctx context.Context, txnID int64) error
+	SynchronizeRead(ctx context.Context, txnID int64, tableName string, key []byte) error
+	ReplicateWrite(ctx context.Context, txnID int64, tableName string, key []byte, value []byte) error
+	ReplicateDelete(ctx context.Context, txnID int64, tableName string, key []byte) error
+	Commit(ctx context.Context, txnID int64, operations []log.RecoveryOperation) error
 	Abort(ctx context.Context, txnID int64) error
 	Close() error
 }
@@ -207,28 +205,24 @@ func (n *NoopReplicationCoordinator) ConnectedNodes() []NodeEndpoint {
 	return out
 }
 
-func (n *NoopReplicationCoordinator) SynchronizeRead(ctx context.Context, txnID int64, key []byte) error {
-	_, _, _ = ctx, txnID, key
+func (n *NoopReplicationCoordinator) SynchronizeRead(ctx context.Context, txnID int64, tableName string, key []byte) error {
 	return nil
 }
 
-func (n *NoopReplicationCoordinator) ReplicateWrite(ctx context.Context, txnID int64, key []byte, value []byte) error {
-	_, _, _, _ = ctx, txnID, key, value
+func (n *NoopReplicationCoordinator) ReplicateWrite(ctx context.Context, txnID int64, tableName string, key []byte, value []byte) error {
 	return nil
 }
 
-func (n *NoopReplicationCoordinator) ReplicateDelete(ctx context.Context, txnID int64, key []byte) error {
-	_, _, _ = ctx, txnID, key
+func (n *NoopReplicationCoordinator) ReplicateDelete(ctx context.Context, txnID int64, tableName string, key []byte) error {
 	return nil
 }
 
-func (n *NoopReplicationCoordinator) Commit(ctx context.Context, txnID int64) error {
-	_, _ = ctx, txnID
+func (n *NoopReplicationCoordinator) Commit(ctx context.Context, txnID int64, operations []log.RecoveryOperation) error {
+	_, _ = txnID, operations
 	return nil
 }
 
 func (n *NoopReplicationCoordinator) Abort(ctx context.Context, txnID int64) error {
-	_, _ = ctx, txnID
 	return nil
 }
 
@@ -249,10 +243,12 @@ const (
 
 // ReplicationEnvelope is the transport payload between internal nodes.
 type ReplicationEnvelope struct {
-	TxnID int64
-	Op    ReplicationOperation
-	Key   []byte
-	Value []byte
+	TxnID     int64
+	Op        ReplicationOperation
+	TableName string
+	Key       []byte
+	Value     []byte
+	Operations []log.RecoveryOperation
 }
 
 // NodeCommunicator defines how replication messages move between nodes.
@@ -435,20 +431,20 @@ func (t *TransportReplicationCoordinator) ConnectedNodes() []NodeEndpoint {
 	return out
 }
 
-func (t *TransportReplicationCoordinator) SynchronizeRead(ctx context.Context, txnID int64, key []byte) error {
-	return t.replicate(ctx, ReplicationEnvelope{TxnID: txnID, Op: ReplicationOpReadSync, Key: key}, t.config.ReadPolicy)
+func (t *TransportReplicationCoordinator) SynchronizeRead(ctx context.Context, txnID int64, tableName string, key []byte) error {
+	return t.replicate(ctx, ReplicationEnvelope{TxnID: txnID, Op: ReplicationOpReadSync, TableName: tableName, Key: key}, t.config.ReadPolicy)
 }
 
-func (t *TransportReplicationCoordinator) ReplicateWrite(ctx context.Context, txnID int64, key []byte, value []byte) error {
-	return t.replicate(ctx, ReplicationEnvelope{TxnID: txnID, Op: ReplicationOpWrite, Key: key, Value: value}, t.config.WritePolicy)
+func (t *TransportReplicationCoordinator) ReplicateWrite(ctx context.Context, txnID int64, tableName string, key []byte, value []byte) error {
+	return t.replicate(ctx, ReplicationEnvelope{TxnID: txnID, Op: ReplicationOpWrite, TableName: tableName, Key: key, Value: value}, t.config.WritePolicy)
 }
 
-func (t *TransportReplicationCoordinator) ReplicateDelete(ctx context.Context, txnID int64, key []byte) error {
-	return t.replicate(ctx, ReplicationEnvelope{TxnID: txnID, Op: ReplicationOpDelete, Key: key}, t.config.WritePolicy)
+func (t *TransportReplicationCoordinator) ReplicateDelete(ctx context.Context, txnID int64, tableName string, key []byte) error {
+	return t.replicate(ctx, ReplicationEnvelope{TxnID: txnID, Op: ReplicationOpDelete, TableName: tableName, Key: key}, t.config.WritePolicy)
 }
 
-func (t *TransportReplicationCoordinator) Commit(ctx context.Context, txnID int64) error {
-	return t.replicate(ctx, ReplicationEnvelope{TxnID: txnID, Op: ReplicationOpCommit}, t.config.WritePolicy)
+func (t *TransportReplicationCoordinator) Commit(ctx context.Context, txnID int64, operations []log.RecoveryOperation) error {
+	return t.replicate(ctx, ReplicationEnvelope{TxnID: txnID, Op: ReplicationOpCommit, Operations: operations}, t.config.WritePolicy)
 }
 
 func (t *TransportReplicationCoordinator) Abort(ctx context.Context, txnID int64) error {
@@ -544,9 +540,7 @@ func NewReplicationCoordinatorFromConfig(config ReplicationConfig) (ReplicationC
 	switch config.Strategy {
 	case SyncStrategyRaft:
 		return NewRaftReplicationCoordinator(config, communicator), nil
-	case SyncStrategyStrongConsistency:
-		return NewStrongConsistencyReplicationCoordinator(config, communicator), nil
-	case SyncStrategyStandalone, SyncStrategyLeaderFollower, SyncStrategyMultiLeader, SyncStrategyQuorum:
+	case SyncStrategyStandalone:
 		return NewTransportReplicationCoordinator(config, communicator), nil
 	default:
 		return nil, fmt.Errorf("unsupported sync strategy %q", config.Strategy)

@@ -18,11 +18,7 @@ func TestReplicationConfigValidate_Backend(t *testing.T) {
 func TestReplicationConfigValidate_StrategyVariants(t *testing.T) {
 	strategies := []SyncStrategy{
 		SyncStrategyStandalone,
-		SyncStrategyLeaderFollower,
-		SyncStrategyMultiLeader,
-		SyncStrategyQuorum,
 		SyncStrategyRaft,
-		SyncStrategyStrongConsistency,
 	}
 
 	for _, strategy := range strategies {
@@ -106,6 +102,18 @@ func (f *failingCommunicator) Send(ctx context.Context, endpoint NodeEndpoint, e
 }
 func (f *failingCommunicator) Close() error { return nil }
 
+type captureCommunicator struct {
+	endpoints []NodeEndpoint
+}
+
+func (c *captureCommunicator) Backend() ReplicationBackend { return ReplicationBackendGRPC }
+func (c *captureCommunicator) Send(ctx context.Context, endpoint NodeEndpoint, envelope ReplicationEnvelope) error {
+	_, _ = ctx, envelope
+	c.endpoints = append(c.endpoints, endpoint)
+	return nil
+}
+func (c *captureCommunicator) Close() error { return nil }
+
 func TestTransportReplicationCoordinator_QuorumFailsWithoutAcks(t *testing.T) {
 	cfg := DefaultReplicationConfig()
 	cfg.Backend = ReplicationBackendMaelstrom
@@ -120,7 +128,7 @@ func TestTransportReplicationCoordinator_QuorumFailsWithoutAcks(t *testing.T) {
 		t.Fatalf("ConnectNode(n2) error = %v", err)
 	}
 
-	err := coord.ReplicateWrite(context.Background(), 1, []byte("k"), []byte("v"))
+	err := coord.ReplicateWrite(context.Background(), 1, "users", []byte("k"), []byte("v"))
 	if err == nil {
 		t.Fatal("expected quorum replication error")
 	}
@@ -132,7 +140,6 @@ func TestNewReplicationCoordinatorFromConfig_SelectsRaftAndStrong(t *testing.T) 
 		strategy SyncStrategy
 	}{
 		{name: "raft", strategy: SyncStrategyRaft},
-		{name: "strong", strategy: SyncStrategyStrongConsistency},
 	}
 
 	for _, tc := range tests {
@@ -158,9 +165,32 @@ func TestRaftReplicationCoordinator_RejectsNonLeaderWrites(t *testing.T) {
 	coord := NewRaftReplicationCoordinator(DefaultReplicationConfig(), &NoopCommunicator{})
 	coord.SetLeadership("node-a", "node-b", 1)
 
-	err := coord.ReplicateWrite(context.Background(), 10, []byte("k"), []byte("v"))
+	err := coord.ReplicateWrite(context.Background(), 10, "users", []byte("k"), []byte("v"))
 	if err == nil {
 		t.Fatal("expected raft write rejection for non-leader")
+	}
+}
+
+func TestRaftReplicationCoordinator_AllowsFollowerWritesWithGRPCBackend(t *testing.T) {
+	cfg := DefaultReplicationConfig()
+	cfg.Backend = ReplicationBackendGRPC
+	cfg.WritePolicy = SyncPolicySynchronous
+
+	comm := &captureCommunicator{}
+	coord := NewRaftReplicationCoordinator(cfg, comm)
+	if err := coord.ConnectNode(context.Background(), NodeEndpoint{NodeID: "node-b", Address: "leader:7000"}); err != nil {
+		t.Fatalf("ConnectNode() error = %v", err)
+	}
+	coord.SetLeadership("node-a", "node-b", 1)
+
+	if err := coord.ReplicateWrite(context.Background(), 10, "users", []byte("k"), []byte("v")); err != nil {
+		t.Fatalf("ReplicateWrite() follower grpc error = %v", err)
+	}
+	if err := coord.Commit(context.Background(), 10, nil); err != nil {
+		t.Fatalf("Commit() follower grpc error = %v", err)
+	}
+	if len(comm.endpoints) == 0 {
+		t.Fatal("expected follower write/commit to use replication transport")
 	}
 }
 
@@ -168,10 +198,10 @@ func TestRaftReplicationCoordinator_RejectsNonLeaderReadsAndCommit(t *testing.T)
 	coord := NewRaftReplicationCoordinator(DefaultReplicationConfig(), &NoopCommunicator{})
 	coord.SetLeadership("node-a", "node-b", 2)
 
-	if err := coord.SynchronizeRead(context.Background(), 11, []byte("k")); err == nil {
+	if err := coord.SynchronizeRead(context.Background(), 11, "users", []byte("k")); err == nil {
 		t.Fatal("expected raft read rejection for non-leader")
 	}
-	if err := coord.Commit(context.Background(), 11); err == nil {
+	if err := coord.Commit(context.Background(), 11, nil); err == nil {
 		t.Fatal("expected raft commit rejection for non-leader")
 	}
 }
@@ -179,7 +209,7 @@ func TestRaftReplicationCoordinator_RejectsNonLeaderReadsAndCommit(t *testing.T)
 func TestRaftReplicationCoordinator_RejectsWritesWhenLeadershipIsNotConfigured(t *testing.T) {
 	coord := NewRaftReplicationCoordinator(DefaultReplicationConfig(), &NoopCommunicator{})
 
-	if err := coord.ReplicateWrite(context.Background(), 12, []byte("k"), []byte("v")); err == nil {
+	if err := coord.ReplicateWrite(context.Background(), 12, "users", []byte("k"), []byte("v")); err == nil {
 		t.Fatal("expected raft write rejection when leadership is missing")
 	}
 }
@@ -205,14 +235,14 @@ func TestRaftReplicationCoordinator_AllowsLeaderCrashThenHigherTermFailover(t *t
 		t.Fatalf("UpdateLeadership(initial leader) error = %v", err)
 	}
 
-	if err := coord.ReplicateWrite(context.Background(), 21, []byte("k"), []byte("v")); err != nil {
+	if err := coord.ReplicateWrite(context.Background(), 21, "users", []byte("k"), []byte("v")); err != nil {
 		t.Fatalf("ReplicateWrite() as leader error = %v", err)
 	}
 
 	if err := coord.UpdateLeadership("n2", "", 3); err != nil {
 		t.Fatalf("UpdateLeadership(leader crash) error = %v", err)
 	}
-	err := coord.ReplicateWrite(context.Background(), 22, []byte("k"), []byte("v"))
+	err := coord.ReplicateWrite(context.Background(), 22, "users", []byte("k"), []byte("v"))
 	if err == nil || !strings.Contains(err.Error(), "not configured") {
 		t.Fatalf("ReplicateWrite() during election error = %v, want leadership-not-configured", err)
 	}
@@ -220,23 +250,8 @@ func TestRaftReplicationCoordinator_AllowsLeaderCrashThenHigherTermFailover(t *t
 	if err := coord.UpdateLeadership("n2", "n3", 4); err != nil {
 		t.Fatalf("UpdateLeadership(new leader) error = %v", err)
 	}
-	err = coord.ReplicateWrite(context.Background(), 23, []byte("k"), []byte("v"))
+	err = coord.ReplicateWrite(context.Background(), 23, "users", []byte("k"), []byte("v"))
 	if err == nil || !strings.Contains(err.Error(), "not leader") {
 		t.Fatalf("ReplicateWrite() as follower error = %v, want not-leader", err)
-	}
-}
-
-func TestStrongConsistencyReplicationCoordinator_UsesSynchronousReads(t *testing.T) {
-	cfg := DefaultReplicationConfig()
-	cfg.Backend = ReplicationBackendMaelstrom
-	coord := NewStrongConsistencyReplicationCoordinator(cfg, &failingCommunicator{})
-
-	if err := coord.ConnectNode(context.Background(), NodeEndpoint{NodeID: "n1"}); err != nil {
-		t.Fatalf("ConnectNode(n1) error = %v", err)
-	}
-
-	err := coord.SynchronizeRead(context.Background(), 1, []byte("k"))
-	if err == nil {
-		t.Fatal("expected synchronous read replication error")
 	}
 }

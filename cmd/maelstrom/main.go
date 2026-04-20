@@ -88,7 +88,6 @@ func (n *Node) Start() error {
 		if msgType == "init" {
 			nodeID, _ := msg.Body["node_id"].(string)
 			n.nodeID = nodeID
-			n.resolveRaftLeadershipFromNodeID()
 			if n.dataDir == "" {
 				tmpDir, err := os.MkdirTemp("", fmt.Sprintf("omag-maelstrom-%s-*", n.nodeID))
 				if err != nil {
@@ -108,6 +107,9 @@ func (n *Node) Start() error {
 			}
 			n.db = engine
 			n.txnManager = engine.IsolationManager()
+			if err := n.bootstrapRaftLeadershipFromInit(msg.Body); err != nil {
+				continue
+			}
 
 			response := MaelstromMessage{
 				Src:  n.nodeID,
@@ -409,21 +411,6 @@ func main() {
 	_ = node.Start()
 }
 
-func (n *Node) resolveRaftLeadershipFromNodeID() {
-	if n.replicationConfig.Strategy != synchronization.SyncStrategyRaft {
-		return
-	}
-	if n.replicationConfig.LocalNodeID == "" {
-		n.replicationConfig.LocalNodeID = n.nodeID
-	}
-	if n.replicationConfig.LeaderNodeID == "" {
-		n.replicationConfig.LeaderNodeID = "n0"
-	}
-	if n.replicationConfig.CurrentTerm == 0 {
-		n.replicationConfig.CurrentTerm = 1
-	}
-}
-
 func (n *Node) applyRaftLeadershipUpdate(body map[string]any) error {
 	if n == nil || n.db == nil {
 		return fmt.Errorf("raft leadership update rejected: database is not initialized")
@@ -439,7 +426,70 @@ func (n *Node) applyRaftLeadershipUpdate(body map[string]any) error {
 	if localNodeID == "" {
 		localNodeID = n.nodeID
 	}
-	return n.db.UpdateRaftLeadership(localNodeID, leaderNodeID, term)
+	if err := n.db.UpdateRaftLeadership(localNodeID, leaderNodeID, term); err != nil {
+		return err
+	}
+	n.replicationConfig.LocalNodeID = localNodeID
+	n.replicationConfig.LeaderNodeID = leaderNodeID
+	if term > 0 {
+		n.replicationConfig.CurrentTerm = term
+	}
+	return nil
+}
+
+func (n *Node) bootstrapRaftLeadershipFromInit(body map[string]any) error {
+	if n == nil || n.db == nil || n.replicationConfig.Strategy != synchronization.SyncStrategyRaft {
+		return nil
+	}
+
+	localNodeID := n.nodeID
+	leaderNodeID := n.replicationConfig.LeaderNodeID
+	if leaderNodeID == "" {
+		leaderNodeID = chooseInitialLeaderFromInitNodeIDs(body["node_ids"])
+	}
+	if leaderNodeID == "" {
+		leaderNodeID = localNodeID
+	}
+
+	term := n.replicationConfig.CurrentTerm
+	if term == 0 {
+		term = 1
+	}
+
+	if err := n.db.UpdateRaftLeadership(localNodeID, leaderNodeID, term); err != nil {
+		return err
+	}
+	n.replicationConfig.LocalNodeID = localNodeID
+	n.replicationConfig.LeaderNodeID = leaderNodeID
+	n.replicationConfig.CurrentTerm = term
+	return nil
+}
+
+func chooseInitialLeaderFromInitNodeIDs(raw any) string {
+	nodeIDs, ok := raw.([]any)
+	if !ok {
+		return ""
+	}
+
+	for _, candidate := range nodeIDs {
+		nodeID, ok := candidate.(string)
+		if !ok {
+			continue
+		}
+		if nodeID == "n0" {
+			return nodeID
+		}
+	}
+
+	for _, candidate := range nodeIDs {
+		nodeID, ok := candidate.(string)
+		if !ok || nodeID == "" {
+			continue
+		}
+		return nodeID
+	}
+
+	return ""
 }
 
 func parseUint64Field(raw any) (uint64, error) {
@@ -463,14 +513,11 @@ func parseUint64Field(raw any) (uint64, error) {
 
 func parseNodeOptionsFromFlags() NodeOptions {
 	dataDir := flag.String("data-dir", "", "base directory for db/wal/lsm files (defaults to temp dir per node)")
-	strategy := flag.String("replication-strategy", string(synchronization.SyncStrategyStandalone), "replication strategy (standalone, leader-follower, multi-leader, quorum, raft, strong-consistency)")
+	strategy := flag.String("replication-strategy", string(synchronization.SyncStrategyStandalone), "replication strategy (standalone, raft)")
 	backend := flag.String("replication-backend", string(synchronization.ReplicationBackendNoop), "replication backend (noop, maelstrom, grpc)")
 	readPolicy := flag.String("replication-read-policy", string(synchronization.SyncPolicyLocal), "read sync policy (local, asynchronous, synchronous, quorum)")
 	writePolicy := flag.String("replication-write-policy", string(synchronization.SyncPolicyLocal), "write sync policy (local, asynchronous, synchronous, quorum)")
 	minAcks := flag.Int("replication-min-write-acks", 1, "minimum acknowledgements for quorum policy")
-	localNodeID := flag.String("raft-local-node-id", "", "local node id override for raft strategy")
-	leaderNodeID := flag.String("raft-leader-node-id", "", "leader node id override for raft strategy")
-	currentTerm := flag.Uint64("raft-term", 0, "raft term override")
 	flag.Parse()
 
 	config := synchronization.ReplicationConfig{
@@ -479,9 +526,6 @@ func parseNodeOptionsFromFlags() NodeOptions {
 		ReadPolicy:   synchronization.SyncPolicy(*readPolicy),
 		WritePolicy:  synchronization.SyncPolicy(*writePolicy),
 		MinWriteAcks: *minAcks,
-		LocalNodeID:  *localNodeID,
-		LeaderNodeID: *leaderNodeID,
-		CurrentTerm:  *currentTerm,
 	}
 
 	if err := config.Validate(); err != nil {

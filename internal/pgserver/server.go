@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgproto3/v2"
 	"github.com/rodrigo0345/omag/internal/database"
 	"github.com/rodrigo0345/omag/internal/storage/schema"
+	"github.com/rodrigo0345/omag/internal/txn/log"
 	"github.com/rodrigo0345/omag/internal/txn/txn_unit"
 	applog "github.com/rodrigo0345/omag/pkg/log"
 )
@@ -29,10 +30,10 @@ const (
 )
 
 var (
-	reCreateTable  = regexp.MustCompile(`(?is)^CREATE\s+TABLE\s+([^(\s]+)\s*\((.*)\)$`)
-	reDropTable    = regexp.MustCompile(`(?is)^DROP\s+TABLE\s+([^(\s;]+)$`)
-	reCreateIndex  = regexp.MustCompile(`(?is)^CREATE\s+(UNIQUE\s+)?INDEX\s+([^(\s]+)\s+ON\s+([^(\s]+)\s*\((.*)\)$`)
-	reDropIndex    = regexp.MustCompile(`(?is)^DROP\s+INDEX\s+([^(\s;]+)$`)
+	reCreateTable  = regexp.MustCompile(`(?is)^CREATE\s+TABLE\s+(?:(IF\s+NOT\s+EXISTS)\s+)?([^(\s]+)\s*\((.*)\)$`)
+	reDropTable    = regexp.MustCompile(`(?is)^DROP\s+TABLE\s+(?:(IF\s+EXISTS)\s+)?([^(\s;]+)$`)
+	reCreateIndex  = regexp.MustCompile(`(?is)^CREATE\s+(UNIQUE\s+)?INDEX\s+(?:(IF\s+NOT\s+EXISTS)\s+)?([^(\s]+)\s+ON\s+([^(\s]+)\s*\((.*)\)$`)
+	reDropIndex    = regexp.MustCompile(`(?is)^DROP\s+INDEX\s+(?:(IF\s+EXISTS)\s+)?([^(\s;]+)$`)
 	reInsert       = regexp.MustCompile(`(?is)^INSERT\s+INTO\s+([^(\s]+)\s*(?:\((.*)\))?\s+VALUES\s*\((.*)\)$`)
 	reUpdate       = regexp.MustCompile(`(?is)^UPDATE\s+([^(\s]+)\s+SET\s+(.*?)(?:\s+WHERE\s+(.*))?$`)
 	reDelete       = regexp.MustCompile(`(?is)^DELETE\s+FROM\s+([^(\s;]+)(?:\s+WHERE\s+(.*))?$`)
@@ -306,13 +307,13 @@ func (s *Server) executeStatement(sess *connSession, stmt string) (statementResu
 	case reShow.MatchString(stmt):
 		return s.execShow(stmt)
 	case reCreateTable.MatchString(stmt):
-		return s.execCreateTable(stmt)
+		return s.execCreateTable(sess, stmt)
 	case reDropTable.MatchString(stmt):
-		return s.execDropTable(stmt)
+		return s.execDropTable(sess, stmt)
 	case reCreateIndex.MatchString(stmt):
-		return s.execCreateIndex(stmt)
+		return s.execCreateIndex(sess, stmt)
 	case reDropIndex.MatchString(stmt):
-		return s.execDropIndex(stmt)
+		return s.execDropIndex(sess, stmt)
 	case reInsert.MatchString(stmt):
 		return s.execInsert(sess, stmt)
 	case reUpdate.MatchString(stmt):
@@ -359,14 +360,15 @@ func (s *Server) beginMutationTxn(sess *connSession, tableName string, tableSche
 	return txnID, started, nil
 }
 
-func (s *Server) execCreateTable(stmt string) (statementResult, error) {
+func (s *Server) execCreateTable(sess *connSession, stmt string) (statementResult, error) {
 	m := reCreateTable.FindStringSubmatch(stmt)
-	if len(m) != 3 {
+	if len(m) != 4 {
 		return statementResult{}, fmt.Errorf("invalid CREATE TABLE statement")
 	}
 
-	tableName := normalizeIdent(m[1])
-	defs := splitTopLevel(m[2], ',')
+	ifNotExists := strings.TrimSpace(m[1]) != ""
+	tableName := normalizeIdent(m[2])
+	defs := splitTopLevel(m[3], ',')
 	if len(defs) == 0 {
 		return statementResult{}, fmt.Errorf("CREATE TABLE requires at least one column")
 	}
@@ -420,37 +422,130 @@ func (s *Server) execCreateTable(stmt string) (statementResult, error) {
 		return statementResult{}, err
 	}
 
-	if err := s.db.CreateTable(tableSchema); err != nil {
+	txnID, started, err := s.beginMutationTxn(sess, tableName, tableSchema)
+	if err != nil {
 		return statementResult{}, err
+	}
+	if sess != nil && sess.inTransaction && sess.txnID == 0 {
+		sess.txnID = txnID
+		sess.txnTableName = tableName
+		sess.txnTableSchema = tableSchema
+	}
+	defer func() {
+		if err != nil {
+			if abortErr := s.db.Abort(txnID); abortErr != nil {
+				err = errors.Join(err, abortErr)
+			}
+			if sess != nil && sess.inTransaction {
+				sess.inTransaction = false
+				sess.txnID = 0
+				sess.txnTableName = ""
+				sess.txnTableSchema = nil
+			}
+			return
+		}
+		if started && (sess == nil || !sess.inTransaction) {
+			if commitErr := s.db.Commit(txnID); commitErr != nil {
+				if abortErr := s.db.Abort(txnID); abortErr != nil {
+					err = errors.Join(commitErr, abortErr)
+					return
+				}
+				err = commitErr
+			}
+		}
+	}()
+
+	createErr := s.db.CreateTable(tableSchema)
+	if createErr != nil {
+		if ifNotExists {
+			// IF NOT EXISTS: suppress error if table already exists (common case: "table already exists")
+			applog.Debug("[PGSERVER] CREATE TABLE IF NOT EXISTS: table %q already exists, continuing", tableName)
+		} else {
+			err = createErr
+			return statementResult{}, createErr
+		}
+	} else {
+		if schemaJSON, marshalErr := tableSchema.ToJSON(); marshalErr == nil {
+			s.recordTransactionOperation(txnID, tableName, log.CREATE_TABLE, nil, schemaJSON)
+		}
 	}
 	s.storeTableSchema(tableName, tableSchema)
 
 	return statementResult{messages: []pgproto3.BackendMessage{&pgproto3.CommandComplete{CommandTag: []byte("CREATE TABLE")}}}, nil
 }
 
-func (s *Server) execDropTable(stmt string) (statementResult, error) {
+func (s *Server) execDropTable(sess *connSession, stmt string) (statementResult, error) {
 	m := reDropTable.FindStringSubmatch(stmt)
-	if len(m) != 2 {
+	if len(m) != 3 {
 		return statementResult{}, fmt.Errorf("invalid DROP TABLE statement")
 	}
 
-	if err := s.db.DropTable(normalizeIdent(m[1])); err != nil {
+	ifExists := strings.TrimSpace(m[1]) != ""
+	tableName := normalizeIdent(m[2])
+	tableSchema, err := s.getTableSchema(tableName)
+	if err != nil && !ifExists {
 		return statementResult{}, err
 	}
-	s.dropTableSchema(normalizeIdent(m[1]))
+	txnID, started, err := s.beginMutationTxn(sess, tableName, tableSchema)
+	if err != nil {
+		return statementResult{}, err
+	}
+	if sess != nil && sess.inTransaction && sess.txnID == 0 {
+		sess.txnID = txnID
+		sess.txnTableName = tableName
+		sess.txnTableSchema = tableSchema
+	}
+	defer func() {
+		if err != nil {
+			if abortErr := s.db.Abort(txnID); abortErr != nil {
+				err = errors.Join(err, abortErr)
+			}
+			if sess != nil && sess.inTransaction {
+				sess.inTransaction = false
+				sess.txnID = 0
+				sess.txnTableName = ""
+				sess.txnTableSchema = nil
+			}
+			return
+		}
+		if started && (sess == nil || !sess.inTransaction) {
+			if commitErr := s.db.Commit(txnID); commitErr != nil {
+				if abortErr := s.db.Abort(txnID); abortErr != nil {
+					err = errors.Join(commitErr, abortErr)
+					return
+				}
+				err = commitErr
+			}
+		}
+	}()
+
+	dropErr := s.db.DropTable(tableName)
+	if dropErr != nil {
+		if ifExists {
+			// IF EXISTS: suppress error if table doesn't exist
+			applog.Debug("[PGSERVER] DROP TABLE IF EXISTS: table %q does not exist, continuing", tableName)
+		} else {
+			err = dropErr
+			return statementResult{}, dropErr
+		}
+	} else {
+		s.recordTransactionOperation(txnID, tableName, log.DROP_TABLE, nil, nil)
+		s.dropTableSchema(tableName)
+	}
 	return statementResult{messages: []pgproto3.BackendMessage{&pgproto3.CommandComplete{CommandTag: []byte("DROP TABLE")}}}, nil
 }
 
-func (s *Server) execCreateIndex(stmt string) (statementResult, error) {
+func (s *Server) execCreateIndex(sess *connSession, stmt string) (statementResult, error) {
 	m := reCreateIndex.FindStringSubmatch(stmt)
-	if len(m) != 4 {
+	if len(m) != 6 {
 		return statementResult{}, fmt.Errorf("invalid CREATE INDEX statement")
 	}
 
 	isUnique := strings.TrimSpace(strings.ToUpper(m[1])) != ""
-	indexName := normalizeIdent(m[2])
-	tableName := normalizeIdent(m[3])
-	cols, err := parseIdentList(m[4])
+	ifNotExists := strings.TrimSpace(m[2]) != ""
+	indexName := normalizeIdent(m[3])
+	tableName := normalizeIdent(m[4])
+	cols, err := parseIdentList(m[5])
 	if err != nil {
 		return statementResult{}, err
 	}
@@ -462,8 +557,62 @@ func (s *Server) execCreateIndex(stmt string) (statementResult, error) {
 	if isUnique {
 		indexType = schema.IndexTypeUnique
 	}
-	if err := s.db.CreateIndex(tableName, indexName, indexType, cols, isUnique); err != nil {
+	tableSchema, err := s.getTableSchema(tableName)
+	if err != nil {
 		return statementResult{}, err
+	}
+	txnID, started, err := s.beginMutationTxn(sess, tableName, tableSchema)
+	if err != nil {
+		return statementResult{}, err
+	}
+	if sess != nil && sess.inTransaction && sess.txnID == 0 {
+		sess.txnID = txnID
+		sess.txnTableName = tableName
+		sess.txnTableSchema = tableSchema
+	}
+	defer func() {
+		if err != nil {
+			if abortErr := s.db.Abort(txnID); abortErr != nil {
+				err = errors.Join(err, abortErr)
+			}
+			if sess != nil && sess.inTransaction {
+				sess.inTransaction = false
+				sess.txnID = 0
+				sess.txnTableName = ""
+				sess.txnTableSchema = nil
+			}
+			return
+		}
+		if started && (sess == nil || !sess.inTransaction) {
+			if commitErr := s.db.Commit(txnID); commitErr != nil {
+				if abortErr := s.db.Abort(txnID); abortErr != nil {
+					err = errors.Join(commitErr, abortErr)
+					return
+				}
+				err = commitErr
+			}
+		}
+	}()
+	indexJSON, marshalErr := json.Marshal(struct {
+		IndexName string   `json:"indexName"`
+		IndexType string   `json:"indexType"`
+		Columns   []string `json:"columns"`
+		Unique    bool     `json:"unique"`
+	}{IndexName: indexName, IndexType: string(indexType), Columns: cols, Unique: isUnique})
+	if marshalErr != nil {
+		return statementResult{}, marshalErr
+	}
+	createIndexErr := s.db.CreateIndex(tableName, indexName, indexType, cols, isUnique)
+	if createIndexErr != nil {
+		if ifNotExists {
+			// IF NOT EXISTS: suppress error if index already exists
+			applog.Debug("[PGSERVER] CREATE INDEX IF NOT EXISTS: index %q already exists, continuing", indexName)
+		} else {
+			err = createIndexErr
+			return statementResult{}, createIndexErr
+		}
+	} else {
+		s.recordTransactionOperation(txnID, tableName, log.CREATE_INDEX, []byte(indexName), indexJSON)
 	}
 	if ts, err := s.getTableSchema(tableName); err == nil {
 		s.storeTableSchema(tableName, ts)
@@ -472,25 +621,87 @@ func (s *Server) execCreateIndex(stmt string) (statementResult, error) {
 	return statementResult{messages: []pgproto3.BackendMessage{&pgproto3.CommandComplete{CommandTag: []byte("CREATE INDEX")}}, status: 'I'}, nil
 }
 
-func (s *Server) execDropIndex(stmt string) (statementResult, error) {
+func (s *Server) execDropIndex(sess *connSession, stmt string) (statementResult, error) {
 	m := reDropIndex.FindStringSubmatch(stmt)
-	if len(m) != 2 {
+	if len(m) != 3 {
 		return statementResult{}, fmt.Errorf("invalid DROP INDEX statement")
 	}
 
-	indexName := normalizeIdent(m[1])
+	ifExists := strings.TrimSpace(m[1]) != ""
+	indexName := normalizeIdent(m[2])
 	tables := s.db.SchemaManager().ListTables()
-	for _, tableName := range tables {
-		if ts, err := s.db.GetTableSchema(tableName); err == nil {
+	var tableName string
+	var tableSchema *schema.TableSchema
+	for _, candidate := range tables {
+		if ts, err := s.db.GetTableSchema(candidate); err == nil {
 			if _, exists := ts.Indexes[indexName]; exists {
-				if err := s.db.DropIndex(tableName, indexName); err != nil {
-					return statementResult{}, err
-				}
-				return statementResult{messages: []pgproto3.BackendMessage{&pgproto3.CommandComplete{CommandTag: []byte("DROP INDEX")}}}, nil
+				tableName = candidate
+				tableSchema = ts
+				break
 			}
 		}
 	}
-	return statementResult{}, fmt.Errorf("index %q not found", indexName)
+	if tableName == "" {
+		if ifExists {
+			applog.Debug("[PGSERVER] DROP INDEX IF EXISTS: index %q does not exist, continuing", indexName)
+			return statementResult{messages: []pgproto3.BackendMessage{&pgproto3.CommandComplete{CommandTag: []byte("DROP INDEX")}}}, nil
+		}
+		return statementResult{}, fmt.Errorf("index %q not found", indexName)
+	}
+	txnID, started, err := s.beginMutationTxn(sess, tableName, tableSchema)
+	if err != nil {
+		return statementResult{}, err
+	}
+	if sess != nil && sess.inTransaction && sess.txnID == 0 {
+		sess.txnID = txnID
+		sess.txnTableName = tableName
+		sess.txnTableSchema = tableSchema
+	}
+	defer func() {
+		if err != nil {
+			if abortErr := s.db.Abort(txnID); abortErr != nil {
+				err = errors.Join(err, abortErr)
+			}
+			if sess != nil && sess.inTransaction {
+				sess.inTransaction = false
+				sess.txnID = 0
+				sess.txnTableName = ""
+				sess.txnTableSchema = nil
+			}
+			return
+		}
+		if started && (sess == nil || !sess.inTransaction) {
+			if commitErr := s.db.Commit(txnID); commitErr != nil {
+				if abortErr := s.db.Abort(txnID); abortErr != nil {
+					err = errors.Join(commitErr, abortErr)
+					return
+				}
+				err = commitErr
+			}
+		}
+	}()
+	dropIndexErr := s.db.DropIndex(tableName, indexName)
+	if dropIndexErr != nil {
+		if ifExists {
+			applog.Debug("[PGSERVER] DROP INDEX IF EXISTS: index %q does not exist, continuing", indexName)
+			return statementResult{messages: []pgproto3.BackendMessage{&pgproto3.CommandComplete{CommandTag: []byte("DROP INDEX")}}}, nil
+		}
+		err = dropIndexErr
+		return statementResult{}, dropIndexErr
+	}
+	s.recordTransactionOperation(txnID, tableName, log.DROP_INDEX, []byte(indexName), nil)
+	if ts, err := s.getTableSchema(tableName); err == nil {
+		s.storeTableSchema(tableName, ts)
+	}
+	return statementResult{messages: []pgproto3.BackendMessage{&pgproto3.CommandComplete{CommandTag: []byte("DROP INDEX")}}}, nil
+}
+
+func (s *Server) recordTransactionOperation(txnID int64, tableName string, opType log.RecordType, key []byte, value []byte) {
+	if recorder, ok := s.db.(interface {
+		RecordTransactionOperation(txnID uint64, tableName string, opType log.RecordType, key []byte, value []byte)
+	}); ok {
+		recorder.RecordTransactionOperation(uint64(txnID), tableName, opType, key, value)
+	}
 }
 
 func (s *Server) execInsert(sess *connSession, stmt string) (statementResult, error) {

@@ -22,6 +22,10 @@ const (
 	DELETE             RecordType = 11
 	OPERATION          RecordType = 12 // Operation record for recovery
 	REPLICATION_INTENT RecordType = 13 // Replication intent metadata for coordinators
+	CREATE_TABLE       RecordType = 14
+	DROP_TABLE         RecordType = 15
+	CREATE_INDEX       RecordType = 16
+	DROP_INDEX         RecordType = 17
 )
 
 type DirtyPageTable map[page.ResourcePageID]uint64
@@ -580,29 +584,30 @@ func (wm *WALManager) AddTransactionOperation(txnID uint64, tableName string, op
 	wm.mu.Lock()
 	defer wm.mu.Unlock()
 
-	if _, exists := wm.txnOperations[txnID]; !exists {
-		wm.txnOperations[txnID] = make([]RecoveryOperation, 0)
-	}
-
-	op := RecoveryOperation{
-		TxnID:     txnID,
-		TableName: tableName,
-		Type:      opType,
-		Key:       key,
-		Value:     value,
-	}
-	wm.txnOperations[txnID] = append(wm.txnOperations[txnID], op)
-
 	// Also write operation to WAL for persistence across manager restarts
 	// We store operations as structured records with Before=operation metadata, After=value
 	rec := WALRecord{
 		TxnID:     txnID,
 		TableName: tableName,
 		Type:      OPERATION,
-		Before:    appendOperationBefore(opType, tableName, key),
+		Before:    appendOperationBefore(opType, tableName, append([]byte(nil), key...)),
 		After:     value,
 	}
-	wm.appendWALRecord(&rec)
+	_, _ = wm.appendWALRecord(&rec)
+}
+
+// GetTransactionOperations returns a snapshot of the structured operations recorded for a transaction.
+func (wm *WALManager) GetTransactionOperations(txnID uint64) []RecoveryOperation {
+	wm.mu.RLock()
+	defer wm.mu.RUnlock()
+
+	ops := wm.txnOperations[txnID]
+	if len(ops) == 0 {
+		return nil
+	}
+	out := make([]RecoveryOperation, len(ops))
+	copy(out, ops)
+	return out
 }
 
 func (wm *WALManager) LogReplicationIntent(txnID uint64, tableName string, opType RecordType, key []byte, value []byte) {

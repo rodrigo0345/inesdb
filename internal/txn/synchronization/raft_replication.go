@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+
+	"github.com/rodrigo0345/omag/internal/txn/log"
 )
 
 var ErrStaleRaftTerm = fmt.Errorf("stale raft term")
@@ -31,7 +33,6 @@ func NewRaftReplicationCoordinator(config ReplicationConfig, communicator NodeCo
 		config.MinWriteAcks = 1
 	}
 	r := &RaftReplicationCoordinator{base: NewTransportReplicationCoordinator(config, communicator)}
-	r.SetLeadership(config.LocalNodeID, config.LeaderNodeID, config.CurrentTerm)
 	return r
 }
 
@@ -51,7 +52,6 @@ func (r *RaftReplicationCoordinator) Configure(config ReplicationConfig) error {
 	if err := r.base.Configure(config); err != nil {
 		return err
 	}
-	r.SetLeadership(config.LocalNodeID, config.LeaderNodeID, config.CurrentTerm)
 	return nil
 }
 
@@ -98,15 +98,27 @@ func (r *RaftReplicationCoordinator) Leadership() (localNodeID string, leaderNod
 
 func (r *RaftReplicationCoordinator) assertWriteLeader() error {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	localNode := r.localNode
+	leaderNode := r.leaderNode
+	r.mu.RUnlock()
 
-	if r.localNode == "" || r.leaderNode == "" {
+	if localNode == "" || leaderNode == "" {
 		return fmt.Errorf("raft write rejected: leadership is not configured")
 	}
-	if r.localNode != r.leaderNode {
-		return fmt.Errorf("raft write rejected: local node %q is not leader %q", r.localNode, r.leaderNode)
+	if localNode == leaderNode {
+		return nil
 	}
-	return nil
+
+	// In gRPC mode we allow followers to proxy client writes through the
+	// replication transport instead of failing fast at the SQL entrypoint.
+	r.base.mu.RLock()
+	backend := r.base.config.Backend
+	r.base.mu.RUnlock()
+	if backend == ReplicationBackendGRPC {
+		return nil
+	}
+
+	return fmt.Errorf("raft write rejected: local node %q is not leader %q", localNode, leaderNode)
 }
 
 func (r *RaftReplicationCoordinator) assertReadLeader() error {
@@ -122,32 +134,32 @@ func (r *RaftReplicationCoordinator) assertReadLeader() error {
 	return nil
 }
 
-func (r *RaftReplicationCoordinator) SynchronizeRead(ctx context.Context, txnID int64, key []byte) error {
+func (r *RaftReplicationCoordinator) SynchronizeRead(ctx context.Context, txnID int64, tableName string, key []byte) error {
 	if err := r.assertReadLeader(); err != nil {
 		return err
 	}
-	return r.base.SynchronizeRead(ctx, txnID, key)
+	return r.base.SynchronizeRead(ctx, txnID, tableName, key)
 }
 
-func (r *RaftReplicationCoordinator) ReplicateWrite(ctx context.Context, txnID int64, key []byte, value []byte) error {
+func (r *RaftReplicationCoordinator) ReplicateWrite(ctx context.Context, txnID int64, tableName string, key []byte, value []byte) error {
 	if err := r.assertWriteLeader(); err != nil {
 		return err
 	}
-	return r.base.ReplicateWrite(ctx, txnID, key, value)
+	return r.base.ReplicateWrite(ctx, txnID, tableName, key, value)
 }
 
-func (r *RaftReplicationCoordinator) ReplicateDelete(ctx context.Context, txnID int64, key []byte) error {
+func (r *RaftReplicationCoordinator) ReplicateDelete(ctx context.Context, txnID int64, tableName string, key []byte) error {
 	if err := r.assertWriteLeader(); err != nil {
 		return err
 	}
-	return r.base.ReplicateDelete(ctx, txnID, key)
+	return r.base.ReplicateDelete(ctx, txnID, tableName, key)
 }
 
-func (r *RaftReplicationCoordinator) Commit(ctx context.Context, txnID int64) error {
+func (r *RaftReplicationCoordinator) Commit(ctx context.Context, txnID int64, operations []log.RecoveryOperation) error {
 	if err := r.assertWriteLeader(); err != nil {
 		return err
 	}
-	return r.base.Commit(ctx, txnID)
+	return r.base.Commit(ctx, txnID, operations)
 }
 
 func (r *RaftReplicationCoordinator) Abort(ctx context.Context, txnID int64) error {

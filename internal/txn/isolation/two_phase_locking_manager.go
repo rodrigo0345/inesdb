@@ -94,6 +94,17 @@ func (m *TwoPhaseLockingManager) EnsureMinNextTxnID(lastTxnID uint64) {
 	}
 }
 
+func (m *TwoPhaseLockingManager) GetTransactionTableContext(txnID int64) (string, *schema.TableSchema, bool) {
+	m.mu.RLock()
+	transaction, ok := m.transactions[TransactionID(txnID)]
+	m.mu.RUnlock()
+	if !ok || transaction == nil {
+		return "", nil, false
+	}
+	tableName, tableSchema := transaction.GetTableContext()
+	return tableName, tableSchema, true
+}
+
 func (m *TwoPhaseLockingManager) Read(txnID int64, Key []byte) ([]byte, error) {
 	m.mu.RLock()
 	transaction, ok := m.transactions[TransactionID(txnID)]

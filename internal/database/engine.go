@@ -97,17 +97,6 @@ func OpenMVCCLSM(opts Options) (_ *Engine, err error) {
 	if err := replicator.Configure(replicationConfig); err != nil {
 		return nil, fmt.Errorf("configure replication coordinator: %w", err)
 	}
-	if raftReplicator, ok := replicator.(*synchronization.RaftReplicationCoordinator); ok {
-		localNode := replicationConfig.LocalNodeID
-		leaderNode := replicationConfig.LeaderNodeID
-		term := replicationConfig.CurrentTerm
-		if localNode != "" {
-			if term == 0 {
-				term = 1
-			}
-			raftReplicator.SetLeadership(localNode, leaderNode, term)
-		}
-	}
 	defer func() {
 		if err != nil && replicator != nil {
 			_ = replicator.Close()
@@ -315,7 +304,8 @@ func (e *Engine) BeginTransaction(isolationLevel uint8, tableName string, tableS
 
 func (e *Engine) Read(txnID int64, key []byte) ([]byte, error) {
 	if e.replicationEnabled && e.replicator != nil {
-		if err := e.replicator.SynchronizeRead(context.Background(), txnID, key); err != nil {
+		tableName, _, _ := e.isolationMgr.GetTransactionTableContext(txnID)
+		if err := e.replicator.SynchronizeRead(context.Background(), txnID, tableName, key); err != nil {
 			return nil, fmt.Errorf("replication read sync failed: %w", err)
 		}
 	}
@@ -354,11 +344,6 @@ func (e *Engine) Write(txnID int64, key []byte, value []byte) error {
 	if err := e.isolationMgr.Write(txnID, key, value); err != nil {
 		return err
 	}
-	if e.replicationEnabled && e.replicator != nil {
-		if err := e.replicator.ReplicateWrite(context.Background(), txnID, key, value); err != nil {
-			return fmt.Errorf("replication write failed: %w", err)
-		}
-	}
 	return nil
 }
 
@@ -366,25 +351,28 @@ func (e *Engine) Delete(txnID int64, key []byte) error {
 	if err := e.isolationMgr.Delete(txnID, key); err != nil {
 		return err
 	}
-	if e.replicationEnabled && e.replicator != nil {
-		if err := e.replicator.ReplicateDelete(context.Background(), txnID, key); err != nil {
-			return fmt.Errorf("replication delete failed: %w", err)
-		}
-	}
 	return nil
 }
 
 func (e *Engine) Commit(txnID int64) error {
+	var operations []log.RecoveryOperation
+	if e.walMgr != nil {
+		operations = e.walMgr.GetTransactionOperations(uint64(txnID))
+	}
+	if e.replicationEnabled && e.replicator != nil {
+		if err := e.replicator.Commit(context.Background(), txnID, operations); err != nil {
+			_ = e.isolationMgr.Abort(txnID)
+			return fmt.Errorf("replication commit failed: %w", err)
+		}
+	}
 	if err := e.isolationMgr.Commit(txnID); err != nil {
 		if e.replicationEnabled && e.replicator != nil {
 			_ = e.replicator.Abort(context.Background(), txnID)
 		}
 		return err
 	}
-	if e.replicationEnabled && e.replicator != nil {
-		if err := e.replicator.Commit(context.Background(), txnID); err != nil {
-			return fmt.Errorf("replication commit failed: %w", err)
-		}
+	if e.walMgr != nil {
+		e.walMgr.CleanupTransactionOperations(uint64(txnID))
 	}
 	return nil
 }
@@ -505,6 +493,13 @@ func (e *Engine) DropIndex(tableName string, indexName string) error {
 	e.indexManagers[tableName] = schema.NewSecondaryIndexManager(tableName, tableSchema, storageEngine)
 	e.mu.Unlock()
 	return nil
+}
+
+func (e *Engine) RecordTransactionOperation(txnID uint64, tableName string, opType log.RecordType, key []byte, value []byte) {
+	if e == nil || e.walMgr == nil {
+		return
+	}
+	e.walMgr.AddTransactionOperation(txnID, tableName, opType, key, value)
 }
 
 func (e *Engine) tableStorageEngine(tableName string) storage.IStorageEngine {

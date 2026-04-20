@@ -34,6 +34,11 @@ func (m *MockLogManager) Checkpoint() error {
 func (m*MockLogManager) CleanupTransactionOperations(txnID uint64) {
 }
 
+func (m *MockLogManager) GetTransactionOperations(txnID uint64) []log.RecoveryOperation {
+	_ = txnID
+	return nil
+}
+
 func (m *MockLogManager) GetLastCheckpointLSN() uint64 {
 	return 0
 }
