@@ -44,6 +44,7 @@ func renderReportLines(report benchmarkReport) []string {
 		"OMAG / INESDB ENGINE VS POSTGRES PERFORMANCE REPORT",
 		"",
 		fmt.Sprintf("Generated: %s", report.GeneratedAt.Format(time.RFC3339)),
+		fmt.Sprintf("Topology: %s", report.Topology),
 		fmt.Sprintf("Host: %s/%s | Go: %s", report.HostOS, report.HostArch, report.GoVersion),
 		fmt.Sprintf("Engine image: %s", report.EngineImage),
 		fmt.Sprintf("Postgres image: %s", report.PostgresImage),
@@ -66,6 +67,25 @@ func renderReportLines(report benchmarkReport) []string {
 			formatDurationCompact(r.Min),
 			formatDurationCompact(r.Max),
 		))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, "POSTGRES QUERY ANALYZER (EXPLAIN ANALYZE)")
+	if report.PostgresNote != "" {
+		lines = append(lines, fmt.Sprintf("note: %s", report.PostgresNote))
+	}
+	if len(report.PostgresAnalysis) == 0 {
+		lines = append(lines, "no postgres explain analysis captured")
+	} else {
+		for _, a := range report.PostgresAnalysis {
+			lines = append(lines,
+				fmt.Sprintf("- %-14s planning=%6.3f ms execution=%6.3f ms", a.Workload, a.PlanningTimeMS, a.ExecutionTimeMS),
+				fmt.Sprintf("  sql: %s", a.Statement),
+			)
+			for _, node := range a.NodeDetails {
+				lines = append(lines, fmt.Sprintf("  node: %s", node))
+			}
+		}
 	}
 
 	lines = append(lines, "")
@@ -128,5 +148,3 @@ func formatDurationCompact(d time.Duration) string {
 	}
 	return fmt.Sprintf("%.2fs", d.Seconds())
 }
-
-

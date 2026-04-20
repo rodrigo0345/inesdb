@@ -15,14 +15,9 @@ import (
 )
 
 func createTestLSM(t *testing.T) *LSMTreeBackend {
-	mockLogMgr := &mocks.MockLogManager{}
-	mockBufMgr := &mocks.MockBufferManager{}
-
-	lsm := NewLSMTreeBackend(mockLogMgr, mockBufMgr)
-	if lsm == nil {
-		t.Fatal("failed to create LSM tree backend")
-	}
-	return lsm
+	t.Helper()
+	// Keep tests isolated from repository-level lsm_data to avoid state bleed.
+	return createIsolatedTestLSM(t)
 }
 
 func createIsolatedTestLSM(t *testing.T) *LSMTreeBackend {
@@ -314,7 +309,10 @@ func TestLSMTreeBackend_ScanReturnsMergedView(t *testing.T) {
 func TestLSMTreeBackend_MemtableFlush(t *testing.T) {
 	lsm := createTestLSM(t)
 
-	initialLevels := len(lsm.levels)
+	initialLevel0Tables := 0
+	if len(lsm.levels) > 0 {
+		initialLevel0Tables = len(lsm.levels[0])
+	}
 
 	for i := 0; i < SSTableMaxSize+10; i++ {
 		key := []byte(fmt.Sprintf("key%d", i))
@@ -324,8 +322,11 @@ func TestLSMTreeBackend_MemtableFlush(t *testing.T) {
 		}
 	}
 
-	if len(lsm.levels) <= initialLevels {
-		t.Fatalf("expected levels to increase after flush, but remained at %d", len(lsm.levels))
+	if len(lsm.levels) == 0 {
+		t.Fatal("expected at least one level after flush")
+	}
+	if len(lsm.levels[0]) <= initialLevel0Tables {
+		t.Fatalf("expected level-0 table count to increase after flush, before=%d after=%d", initialLevel0Tables, len(lsm.levels[0]))
 	}
 
 	for i := 0; i < SSTableMaxSize+10; i++ {

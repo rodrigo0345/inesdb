@@ -6,7 +6,7 @@
 /Contents 4 0 R>>
 endobj
 4 0 obj
-<</Length 4450>>
+<</Length 4464>>
 stream
 0 J
 0 j
@@ -16,63 +16,63 @@ BT /Ff3d9bb94eeeff89a090f4dc5bfa51473a19690b3 10.00 Tf ET
 0.000 g
 BT /Ff3d9bb94eeeff89a090f4dc5bfa51473a19690b3 10.00 Tf ET
 BT 36.85 798.50 Td (OMAG / INESDB ENGINE VS POSTGRES PERFORMANCE REPORT)Tj ET
-BT 36.85 774.40 Td (Generated: 2026-04-20T09:52:52Z)Tj ET
-BT 36.85 761.65 Td (Host: linux/amd64 | Go: go1.26.1)Tj ET
-BT 36.85 748.89 Td (Engine image: omag-benchmark-engine:latest)Tj ET
-BT 36.85 736.13 Td (Postgres image: postgres:16-alpine)Tj ET
-BT 36.85 723.38 Td (Seed rows: 8 | Warmup ops: 1 | Measured ops: 2)Tj ET
-BT 36.85 699.28 Td (RESULTS)Tj ET
-BT 36.85 686.53 Td (backend     workload        ops/s      avg        p50        p95        p99        min)Tj ET
-BT 36.85 673.77 Td (       max)Tj ET
-BT 36.85 661.02 Td (--------------------------------------------------------------------------------------)Tj ET
-BT 36.85 648.26 Td (----------)Tj ET
-BT 36.85 635.50 Td (engine      deletes          505.80        1ms        1ms        1ms        1ms       )Tj ET
-BT 36.85 622.75 Td (1ms        1ms)Tj ET
-BT 36.85 609.99 Td (engine      mixed           6247.19      159us      135us      135us      135us     )Tj ET
-BT 36.85 597.24 Td (135us      184us)Tj ET
-BT 36.85 584.48 Td (engine      reads           5873.56      170us      137us      137us      137us     )Tj ET
-BT 36.85 571.72 Td (137us      203us)Tj ET
-BT 36.85 558.97 Td (engine      where-clauses  14950.14       66us       49us       49us       49us      )Tj ET
-BT 36.85 546.21 Td (49us       83us)Tj ET
-BT 36.85 533.46 Td (engine      writes           475.92        2ms        2ms        2ms        2ms       )Tj ET
-BT 36.85 520.70 Td (2ms        2ms)Tj ET
-BT 36.85 507.95 Td (postgres    deletes          699.49        1ms        1ms        1ms        1ms       )Tj ET
-BT 36.85 495.19 Td (1ms        1ms)Tj ET
-BT 36.85 482.43 Td (postgres    mixed           5792.67      172us      127us      127us      127us     )Tj ET
-BT 36.85 469.68 Td (127us      217us)Tj ET
-BT 36.85 456.92 Td (postgres    reads           5092.43      196us      171us      171us      171us     )Tj ET
-BT 36.85 444.17 Td (171us      220us)Tj ET
-BT 36.85 431.41 Td (postgres    where-clauses  10299.35       96us       53us       53us       53us      )Tj ET
-BT 36.85 418.65 Td (53us      140us)Tj ET
-BT 36.85 405.90 Td (postgres    writes           924.63        1ms      621us      621us      621us     )Tj ET
-BT 36.85 393.14 Td (621us        1ms)Tj ET
-BT 36.85 369.05 Td (ENGINE CPU HOTSPOTS \(PPROF + AMDAHL\))Tj ET
-BT 36.85 356.29 Td (profile capture: 10s)Tj ET
-BT 36.85 343.54 Td (profile file: /tmp/omag-engine-cpu-1776678761855943845.pprof)Tj ET
-BT 36.85 330.78 Td (function                                                       flat%    cum%   )Tj ET
-BT 36.85 318.02 Td (amdahl\(max\)    amdahl\(2x\))Tj ET
-BT 36.85 305.27 Td (--------------------------------------------------------------------------------------)Tj ET
-BT 36.85 292.51 Td (----------)Tj ET
-BT 36.85 279.76 Td (github.com/rodrigo0345/omag/internal/database.\(*Engine\).BeginTransaction   1.06%   )Tj ET
-BT 36.85 267.00 Td (2.13%        1.01x        1.01x)Tj ET
-BT 36.85 254.24 Td (  nested hotspots inside selected samples:)Tj ET
-BT 36.85 241.49 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1 flat= 0.00%)Tj ET
-BT 36.85 228.73 Td (cum= 2.13%)Tj ET
-BT 36.85 215.98 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).beginMutationTxn flat=)Tj ET
-BT 36.85 203.22 Td (0.00% cum= 2.13%)Tj ET
-BT 36.85 190.46 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).execInsert flat= 0.00%)Tj ET
-BT 36.85 177.71 Td (cum= 2.13%)Tj ET
-BT 36.85 164.95 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).executeStatement flat=)Tj ET
-BT 36.85 152.20 Td (0.00% cum= 2.13%)Tj ET
-BT 36.85 139.44 Td (github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).writeOrderedRow   1.06%  )Tj ET
-BT 36.85 126.69 Td (17.02%        1.01x        1.01x)Tj ET
-BT 36.85 113.93 Td (  nested hotspots inside selected samples:)Tj ET
-BT 36.85 101.17 Td (    github.com/rodrigo0345/omag/internal/database.\(*Engine\).BeginTransaction flat=)Tj ET
-BT 36.85 88.42 Td (1.06% cum= 2.13%)Tj ET
-BT 36.85 75.66 Td (    github.com/rodrigo0345/omag/internal/database.\(*Engine\).Commit flat= 0.00%)Tj ET
-BT 36.85 62.91 Td (cum=11.70%)Tj ET
-BT 36.85 50.15 Td (    github.com/rodrigo0345/omag/internal/database.\(*Engine\).Write flat= 0.00% cum=)Tj ET
-BT 36.85 37.39 Td (2.13%)Tj ET
+BT 36.85 774.40 Td (Generated: 2026-04-20T12:51:03Z)Tj ET
+BT 36.85 761.65 Td (Topology: three-node-replication)Tj ET
+BT 36.85 748.89 Td (Host: linux/amd64 | Go: go1.26.1)Tj ET
+BT 36.85 736.13 Td (Engine image: omag-benchmark-engine:latest)Tj ET
+BT 36.85 723.38 Td (Postgres image: postgres:16-alpine)Tj ET
+BT 36.85 710.62 Td (Seed rows: 8 | Warmup ops: 1 | Measured ops: 2)Tj ET
+BT 36.85 686.53 Td (RESULTS)Tj ET
+BT 36.85 673.77 Td (backend     workload        ops/s      avg        p50        p95        p99        min)Tj ET
+BT 36.85 661.02 Td (       max)Tj ET
+BT 36.85 648.26 Td (--------------------------------------------------------------------------------------)Tj ET
+BT 36.85 635.50 Td (----------)Tj ET
+BT 36.85 622.75 Td (engine      deletes          156.08        6ms        6ms        6ms        6ms       )Tj ET
+BT 36.85 609.99 Td (6ms        6ms)Tj ET
+BT 36.85 597.24 Td (engine      mixed          11962.94       83us       73us       73us       73us      )Tj ET
+BT 36.85 584.48 Td (73us       93us)Tj ET
+BT 36.85 571.72 Td (engine      reads          12563.05       79us       56us       56us       56us      )Tj ET
+BT 36.85 558.97 Td (56us      102us)Tj ET
+BT 36.85 546.21 Td (engine      where-clauses  11347.78       87us       73us       73us       73us      )Tj ET
+BT 36.85 533.46 Td (73us      102us)Tj ET
+BT 36.85 520.70 Td (engine      writes           157.80        6ms        6ms        6ms        6ms       )Tj ET
+BT 36.85 507.95 Td (6ms        6ms)Tj ET
+BT 36.85 495.19 Td (postgres    deletes          535.61        1ms        1ms        1ms        1ms       )Tj ET
+BT 36.85 482.43 Td (1ms        1ms)Tj ET
+BT 36.85 469.68 Td (postgres    mixed           9934.73      100us       85us       85us       85us      )Tj ET
+BT 36.85 456.92 Td (85us      115us)Tj ET
+BT 36.85 444.17 Td (postgres    reads           9711.94      102us       62us       62us       62us      )Tj ET
+BT 36.85 431.41 Td (62us      143us)Tj ET
+BT 36.85 418.65 Td (postgres    where-clauses  11564.30       86us       57us       57us       57us      )Tj ET
+BT 36.85 405.90 Td (57us      115us)Tj ET
+BT 36.85 393.14 Td (postgres    writes           599.90        1ms        1ms        1ms        1ms       )Tj ET
+BT 36.85 380.39 Td (1ms        1ms)Tj ET
+BT 36.85 356.29 Td (ENGINE CPU HOTSPOTS \(PPROF + AMDAHL\))Tj ET
+BT 36.85 343.54 Td (profile capture: 10s)Tj ET
+BT 36.85 330.78 Td (profile file: /tmp/omag-engine-cpu-1776689446085095902.pprof)Tj ET
+BT 36.85 318.02 Td (function                                                       flat%    cum%   )Tj ET
+BT 36.85 305.27 Td (amdahl\(max\)    amdahl\(2x\))Tj ET
+BT 36.85 292.51 Td (--------------------------------------------------------------------------------------)Tj ET
+BT 36.85 279.76 Td (----------)Tj ET
+BT 36.85 267.00 Td (github.com/rodrigo0345/omag/internal/pgserver.splitStatements    0.75%    0.75%       )Tj ET
+BT 36.85 254.24 Td (1.01x        1.00x)Tj ET
+BT 36.85 241.49 Td (  nested hotspots inside selected samples:)Tj ET
+BT 36.85 228.73 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1 flat= 0.00%)Tj ET
+BT 36.85 215.98 Td (cum= 0.75%)Tj ET
+BT 36.85 203.22 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).handleQuery flat= 0.00%)Tj ET
+BT 36.85 190.46 Td (cum= 0.75%)Tj ET
+BT 36.85 177.71 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).serveConn flat= 0.00% cum=)Tj ET
+BT 36.85 164.95 Td (0.75%)Tj ET
+BT 36.85 152.20 Td (github.com/rodrigo0345/omag/internal/txn/synchronization.\(*DefaultGRPCUnaryInvoker\).In)Tj ET
+BT 36.85 139.44 Td (voke   0.75%   18.80%        1.01x        1.00x)Tj ET
+BT 36.85 126.69 Td (  nested hotspots inside selected samples:)Tj ET
+BT 36.85 113.93 Td (    github.com/rodrigo0345/omag/internal/database.\(*Engine\).Commit flat= 0.00% cum=)Tj ET
+BT 36.85 101.17 Td (7.52%)Tj ET
+BT 36.85 88.42 Td (    github.com/rodrigo0345/omag/internal/database.\(*Engine\).Write flat= 0.00%)Tj ET
+BT 36.85 75.66 Td (cum=11.28%)Tj ET
+BT 36.85 62.91 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1 flat= 0.00%)Tj ET
+BT 36.85 50.15 Td (cum=18.80%)Tj ET
+BT 36.85 37.39 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).deleteRowByPrimaryKey)Tj ET
 
 endstream
 endobj
@@ -83,7 +83,7 @@ endobj
 /Contents 6 0 R>>
 endobj
 6 0 obj
-<</Length 4622>>
+<</Length 4555>>
 stream
 0 J
 0 j
@@ -92,65 +92,66 @@ BT /Ff3d9bb94eeeff89a090f4dc5bfa51473a19690b3 10.00 Tf ET
 0.000 G
 0.000 g
 BT /Ff3d9bb94eeeff89a090f4dc5bfa51473a19690b3 10.00 Tf ET
-BT 36.85 798.50 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1 flat= 0.00%)Tj ET
-BT 36.85 785.74 Td (cum=17.02%)Tj ET
-BT 36.85 772.98 Td (github.com/rodrigo0345/omag/internal/storage/lsm.newSSTableIter   1.06%    2.13%      )Tj ET
-BT 36.85 760.23 Td ( 1.01x        1.01x)Tj ET
-BT 36.85 747.47 Td (  nested hotspots inside selected samples:)Tj ET
-BT 36.85 734.72 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1 flat= 0.00%)Tj ET
-BT 36.85 721.96 Td (cum= 2.13%)Tj ET
-BT 36.85 709.20 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).execSelect flat= 0.00%)Tj ET
-BT 36.85 696.45 Td (cum= 2.13%)Tj ET
-BT 36.85 683.69 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).executeStatement flat=)Tj ET
-BT 36.85 670.94 Td (0.00% cum= 2.13%)Tj ET
-BT 36.85 658.18 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).handleQuery flat= 0.00%)Tj ET
-BT 36.85 645.43 Td (cum= 2.13%)Tj ET
-BT 36.85 632.67 Td (github.com/rodrigo0345/omag/internal/database.\(*Engine\).Commit   0.00%   11.70%       )Tj ET
-BT 36.85 619.91 Td (1.00x        1.00x)Tj ET
+BT 36.85 798.50 Td (flat= 0.00% cum= 0.75%)Tj ET
+BT 36.85 785.74 Td (github.com/rodrigo0345/omag/internal/database.\(*Engine\).Commit   0.00%   15.04%       )Tj ET
+BT 36.85 772.98 Td (1.00x        1.00x)Tj ET
+BT 36.85 760.23 Td (  nested hotspots inside selected samples:)Tj ET
+BT 36.85 747.47 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1 flat= 0.00%)Tj ET
+BT 36.85 734.72 Td (cum=15.04%)Tj ET
+BT 36.85 721.96 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).deleteRowByPrimaryKey)Tj ET
+BT 36.85 709.20 Td (flat= 0.00% cum= 0.75%)Tj ET
+BT 36.85 696.45 Td (   )Tj ET
+BT 36.85 683.69 Td (github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).deleteRowByPrimaryKey.func1)Tj ET
+BT 36.85 670.94 Td (flat= 0.00% cum= 0.75%)Tj ET
+BT 36.85 658.18 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).execDelete flat= 0.00%)Tj ET
+BT 36.85 645.43 Td (cum= 0.75%)Tj ET
+BT 36.85 632.67 Td (github.com/rodrigo0345/omag/internal/database.\(*Engine\).CreateTable   0.00%    0.75%  )Tj ET
+BT 36.85 619.91 Td (     1.00x        1.00x)Tj ET
 BT 36.85 607.16 Td (  nested hotspots inside selected samples:)Tj ET
 BT 36.85 594.40 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1 flat= 0.00%)Tj ET
-BT 36.85 581.65 Td (cum=11.70%)Tj ET
-BT 36.85 568.89 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).execInsert flat= 0.00%)Tj ET
-BT 36.85 556.13 Td (cum=11.70%)Tj ET
+BT 36.85 581.65 Td (cum= 0.75%)Tj ET
+BT 36.85 568.89 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).execCreateTable flat=)Tj ET
+BT 36.85 556.13 Td (0.00% cum= 0.75%)Tj ET
 BT 36.85 543.38 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).executeStatement flat=)Tj ET
-BT 36.85 530.62 Td (0.00% cum=11.70%)Tj ET
+BT 36.85 530.62 Td (0.00% cum= 0.75%)Tj ET
 BT 36.85 517.87 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).handleQuery flat= 0.00%)Tj ET
-BT 36.85 505.11 Td (cum=11.70%)Tj ET
-BT 36.85 492.35 Td (github.com/rodrigo0345/omag/internal/database.\(*Engine\).CreateTable   0.00%    2.13%  )Tj ET
-BT 36.85 479.60 Td (     1.00x        1.00x)Tj ET
+BT 36.85 505.11 Td (cum= 0.75%)Tj ET
+BT 36.85 492.35 Td (github.com/rodrigo0345/omag/internal/database.\(*Engine\).Write    0.00%   12.78%       )Tj ET
+BT 36.85 479.60 Td (1.00x        1.00x)Tj ET
 BT 36.85 466.84 Td (  nested hotspots inside selected samples:)Tj ET
-BT 36.85 454.09 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1 flat= 0.00%)Tj ET
-BT 36.85 441.33 Td (cum= 2.13%)Tj ET
-BT 36.85 428.58 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).execCreateTable flat=)Tj ET
-BT 36.85 415.82 Td (0.00% cum= 2.13%)Tj ET
-BT 36.85 403.06 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).executeStatement flat=)Tj ET
-BT 36.85 390.31 Td (0.00% cum= 2.13%)Tj ET
-BT 36.85 377.55 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).handleQuery flat= 0.00%)Tj ET
-BT 36.85 364.80 Td (cum= 2.13%)Tj ET
-BT 36.85 352.04 Td (github.com/rodrigo0345/omag/internal/database.\(*Engine\).Write    0.00%    2.13%       )Tj ET
-BT 36.85 339.28 Td (1.00x        1.00x)Tj ET
-BT 36.85 326.53 Td (  nested hotspots inside selected samples:)Tj ET
-BT 36.85 313.77 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1 flat= 0.00%)Tj ET
-BT 36.85 301.02 Td (cum= 2.13%)Tj ET
-BT 36.85 288.26 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).execInsert flat= 0.00%)Tj ET
-BT 36.85 275.50 Td (cum= 2.13%)Tj ET
-BT 36.85 262.75 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).executeStatement flat=)Tj ET
-BT 36.85 249.99 Td (0.00% cum= 2.13%)Tj ET
-BT 36.85 237.24 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).handleQuery flat= 0.00%)Tj ET
-BT 36.85 224.48 Td (cum= 2.13%)Tj ET
-BT 36.85 211.72 Td (github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2   0.00%    3.19%  )Tj ET
-BT 36.85 198.97 Td (     1.00x        1.00x)Tj ET
-BT 36.85 186.21 Td (github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1   0.00%   78.72%)Tj ET
-BT 36.85 173.46 Td (       1.00x        1.00x)Tj ET
-BT 36.85 160.70 Td (  nested hotspots inside selected samples:)Tj ET
-BT 36.85 147.95 Td (    github.com/rodrigo0345/omag/internal/database.\(*Engine\).BeginTransaction flat=)Tj ET
-BT 36.85 135.19 Td (1.06% cum= 2.13%)Tj ET
-BT 36.85 122.43 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).writeOrderedRow flat=)Tj ET
-BT 36.85 109.68 Td (1.06% cum=17.02%)Tj ET
-BT 36.85 96.92 Td (    github.com/rodrigo0345/omag/internal/storage/lsm.newSSTableIter flat= 1.06% cum=)Tj ET
-BT 36.85 84.17 Td (2.13%)Tj ET
-BT 36.85 71.41 Td (    github.com/rodrigo0345/omag/internal/database.\(*Engine\).Commit flat= 0.00%)Tj ET
-BT 36.85 58.65 Td (cum=11.70%)Tj ET
+BT 36.85 454.09 Td (   )Tj ET
+BT 36.85 441.33 Td (github.com/rodrigo0345/omag/internal/txn/synchronization.\(*DefaultGRPCUnaryInvoker\).In)Tj ET
+BT 36.85 428.58 Td (voke flat= 0.75% cum=11.28%)Tj ET
+BT 36.85 415.82 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1 flat= 0.00%)Tj ET
+BT 36.85 403.06 Td (cum=12.78%)Tj ET
+BT 36.85 390.31 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).execInsert flat= 0.00%)Tj ET
+BT 36.85 377.55 Td (cum=12.78%)Tj ET
+BT 36.85 364.80 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).executeStatement flat=)Tj ET
+BT 36.85 352.04 Td (0.00% cum=12.78%)Tj ET
+BT 36.85 339.28 Td (github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2   0.00%    1.50%  )Tj ET
+BT 36.85 326.53 Td (     1.00x        1.00x)Tj ET
+BT 36.85 313.77 Td (github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1   0.00%   50.38%)Tj ET
+BT 36.85 301.02 Td (       1.00x        1.00x)Tj ET
+BT 36.85 288.26 Td (  nested hotspots inside selected samples:)Tj ET
+BT 36.85 275.50 Td (    github.com/rodrigo0345/omag/internal/pgserver.splitStatements flat= 0.75% cum=)Tj ET
+BT 36.85 262.75 Td (0.75%)Tj ET
+BT 36.85 249.99 Td (   )Tj ET
+BT 36.85 237.24 Td (github.com/rodrigo0345/omag/internal/txn/synchronization.\(*DefaultGRPCUnaryInvoker\).In)Tj ET
+BT 36.85 224.48 Td (voke flat= 0.75% cum=18.80%)Tj ET
+BT 36.85 211.72 Td (    github.com/rodrigo0345/omag/internal/database.\(*Engine\).Commit flat= 0.00%)Tj ET
+BT 36.85 198.97 Td (cum=15.04%)Tj ET
+BT 36.85 186.21 Td (    github.com/rodrigo0345/omag/internal/database.\(*Engine\).CreateTable flat= 0.00%)Tj ET
+BT 36.85 173.46 Td (cum= 0.75%)Tj ET
+BT 36.85 160.70 Td (github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).deleteRowByPrimaryKey   0.00% )Tj ET
+BT 36.85 147.95 Td (  0.75%        1.00x        1.00x)Tj ET
+BT 36.85 135.19 Td (  nested hotspots inside selected samples:)Tj ET
+BT 36.85 122.43 Td (    github.com/rodrigo0345/omag/internal/database.\(*Engine\).Commit flat= 0.00% cum=)Tj ET
+BT 36.85 109.68 Td (0.75%)Tj ET
+BT 36.85 96.92 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).Serve.func2.1 flat= 0.00%)Tj ET
+BT 36.85 84.17 Td (cum= 0.75%)Tj ET
+BT 36.85 71.41 Td (   )Tj ET
+BT 36.85 58.65 Td (github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).deleteRowByPrimaryKey.func1)Tj ET
+BT 36.85 45.90 Td (flat= 0.00% cum= 0.75%)Tj ET
 
 endstream
 endobj
@@ -161,7 +162,7 @@ endobj
 /Contents 8 0 R>>
 endobj
 8 0 obj
-<</Length 766>>
+<</Length 914>>
 stream
 0 J
 0 j
@@ -170,13 +171,15 @@ BT /Ff3d9bb94eeeff89a090f4dc5bfa51473a19690b3 10.00 Tf ET
 0.000 G
 0.000 g
 BT /Ff3d9bb94eeeff89a090f4dc5bfa51473a19690b3 10.00 Tf ET
-BT 36.85 798.50 Td (Notes:)Tj ET
-BT 36.85 785.74 Td (- Read workloads issue simple SELECT statements with point lookups.)Tj ET
-BT 36.85 772.98 Td (- Where-clause workloads filter with equality predicates joined by AND.)Tj ET
-BT 36.85 760.23 Td (- Write workloads insert new rows; delete workloads remove existing seed rows.)Tj ET
-BT 36.85 747.47 Td (- Mixed workloads interleave reads, filters, inserts, and deletes.)Tj ET
-BT 36.85 734.72 Td (- Amdahl\(max\) assumes only that function is optimized with infinite speedup.)Tj ET
-BT 36.85 721.96 Td (- Amdahl\(2x\) assumes that function is optimized by exactly 2x.)Tj ET
+BT 36.85 798.50 Td (    github.com/rodrigo0345/omag/internal/pgserver.\(*Server\).execDelete flat= 0.00%)Tj ET
+BT 36.85 785.74 Td (cum= 0.75%)Tj ET
+BT 36.85 761.65 Td (Notes:)Tj ET
+BT 36.85 748.89 Td (- Read workloads issue simple SELECT statements with point lookups.)Tj ET
+BT 36.85 736.13 Td (- Where-clause workloads filter with equality predicates joined by AND.)Tj ET
+BT 36.85 723.38 Td (- Write workloads insert new rows; delete workloads remove existing seed rows.)Tj ET
+BT 36.85 710.62 Td (- Mixed workloads interleave reads, filters, inserts, and deletes.)Tj ET
+BT 36.85 697.87 Td (- Amdahl\(max\) assumes only that function is optimized with infinite speedup.)Tj ET
+BT 36.85 685.11 Td (- Amdahl\(2x\) assumes that function is optimized by exactly 2x.)Tj ET
 
 endstream
 endobj
@@ -209,8 +212,8 @@ endobj
 10 0 obj
 <<
 /Producer (þÿ F P D F   1 . 7)
-/CreationDate (D:20260420105252)
-/ModDate (D:20260420105252)
+/CreationDate (D:20260420135103)
+/ModDate (D:20260420135103)
 >>
 endobj
 11 0 obj
@@ -227,17 +230,17 @@ endobj
 xref
 0 12
 0000000000 65535 f 
-0000010230 00000 n 
-0000010423 00000 n 
+0000010325 00000 n 
+0000010518 00000 n 
 0000000009 00000 n 
 0000000087 00000 n 
-0000004587 00000 n 
-0000004665 00000 n 
-0000009337 00000 n 
-0000009415 00000 n 
-0000010329 00000 n 
-0000010584 00000 n 
-0000010698 00000 n 
+0000004601 00000 n 
+0000004679 00000 n 
+0000009284 00000 n 
+0000009362 00000 n 
+0000010424 00000 n 
+0000010679 00000 n 
+0000010793 00000 n 
 trailer
 <<
 /Size 12
@@ -245,5 +248,5 @@ trailer
 /Info 10 0 R
 >>
 startxref
-10796
+10891
 %%EOF

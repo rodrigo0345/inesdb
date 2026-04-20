@@ -37,7 +37,10 @@ func main() {
 	walPath := flag.String("wal", defaultWALPath, "path to the WAL file")
 	replicationStrategy := flag.String("replication-strategy", string(synchronization.SyncStrategyStandalone), "replication strategy (standalone|leader-follower|multi-leader|quorum|raft|strong-consistency)")
 	replicationBackend := flag.String("replication-backend", string(synchronization.ReplicationBackendNoop), "replication backend (noop|maelstrom|grpc)")
+	replicationMinWriteAcks := flag.Int("replication-min-write-acks", 1, "minimum acknowledgements required for quorum policies")
 	localNodeID := flag.String("replication-local-node-id", "", "local replication node id")
+	leaderNodeID := flag.String("replication-leader-node-id", "", "leader replication node id (raft)")
+	replicationCurrentTerm := flag.Uint64("replication-current-term", 0, "current raft term")
 	peerNodes := flag.String("replication-peer-nodes", "", "comma-separated peer list: nodeA=host:port,nodeB=host:port")
 	grpcListen := flag.String("replication-grpc-listen", "", "address for incoming gRPC replication envelopes, e.g. :7000")
 	pprofListen := flag.String("pprof-listen", "", "optional net/http/pprof listen address, e.g. :6060")
@@ -54,7 +57,10 @@ func main() {
 	cfg := synchronization.DefaultReplicationConfig()
 	cfg.Strategy = synchronization.SyncStrategy(*replicationStrategy)
 	cfg.Backend = synchronization.ReplicationBackend(*replicationBackend)
+	cfg.MinWriteAcks = *replicationMinWriteAcks
 	cfg.LocalNodeID = *localNodeID
+	cfg.LeaderNodeID = *leaderNodeID
+	cfg.CurrentTerm = *replicationCurrentTerm
 	if cfg.Strategy == synchronization.SyncStrategyRaft && cfg.LocalNodeID == "" {
 		inferredNodeID, inferErr := inferNodeIDFromListenAddress(*grpcListen)
 		if inferErr != nil {
@@ -238,17 +244,18 @@ func newReplicatedTxnApplier(db database.Database) *replicatedTxnApplier {
 
 func (a *replicatedTxnApplier) ApplyEnvelope(ctx context.Context, envelope synchronization.ReplicationEnvelope) error {
 	_ = ctx
+	iso := a.db.IsolationManager()
 
 	switch envelope.Op {
 	case synchronization.ReplicationOpWrite:
 		localTxn := a.ensureTxn(envelope.TxnID)
-		return a.db.Write(localTxn, envelope.Key, envelope.Value)
+		return iso.Write(localTxn, envelope.Key, envelope.Value)
 	case synchronization.ReplicationOpDelete:
 		localTxn := a.ensureTxn(envelope.TxnID)
-		return a.db.Delete(localTxn, envelope.Key)
+		return iso.Delete(localTxn, envelope.Key)
 	case synchronization.ReplicationOpReadSync:
 		localTxn := a.ensureTxn(envelope.TxnID)
-		_, err := a.db.Read(localTxn, envelope.Key)
+		_, err := iso.Read(localTxn, envelope.Key)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -258,13 +265,13 @@ func (a *replicatedTxnApplier) ApplyEnvelope(ctx context.Context, envelope synch
 		if !ok {
 			return nil
 		}
-		return a.db.Commit(localTxn)
+		return iso.Commit(localTxn)
 	case synchronization.ReplicationOpAbort:
 		localTxn, ok := a.takeTxn(envelope.TxnID)
 		if !ok {
 			return nil
 		}
-		return a.db.Abort(localTxn)
+		return iso.Abort(localTxn)
 	default:
 		return fmt.Errorf("unsupported replication op %q", envelope.Op)
 	}

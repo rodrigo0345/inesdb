@@ -30,6 +30,8 @@ const (
 	defaultSeedRows      = 256
 	defaultWarmupOps     = 32
 	defaultMeasuredOps   = 128
+	defaultTopology      = "single-node"
+	threeNodeTopology    = "three-node-replication"
 )
 
 type backendName string
@@ -69,6 +71,7 @@ type workloadResult struct {
 
 type benchmarkReport struct {
 	GeneratedAt       time.Time
+	Topology          string
 	HostOS            string
 	HostArch          string
 	GoVersion         string
@@ -78,6 +81,8 @@ type benchmarkReport struct {
 	WarmupOps         int
 	MeasuredOps       int
 	Results           []workloadResult
+	PostgresAnalysis  []postgresExplain
+	PostgresNote      string
 	CPUProfileSeconds int
 	CPUProfilePath    string
 	CPUProfileNote    string
@@ -116,6 +121,7 @@ func main() {
 	var (
 		engineImage   = flag.String("engine-image", defaultEngineImage, "engine container image to benchmark")
 		postgresImage = flag.String("postgres-image", defaultPostgresImage, "postgres container image to benchmark")
+		topology      = flag.String("topology", defaultTopology, "benchmark topology (single-node|three-node-replication)")
 		seedRows      = flag.Int("seed-rows", defaultSeedRows, "number of seed rows to load into each table")
 		warmupOps     = flag.Int("warmup-ops", defaultWarmupOps, "warmup operations to run before timing")
 		measuredOps   = flag.Int("ops", defaultMeasuredOps, "measured operations per workload")
@@ -129,6 +135,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "invalid benchmark arguments")
 		os.Exit(2)
 	}
+	if *topology != defaultTopology && *topology != threeNodeTopology {
+		fmt.Fprintln(os.Stderr, "invalid topology, expected single-node or three-node-replication")
+		os.Exit(2)
+	}
 
 	root, err := findRepoRoot()
 	if err != nil {
@@ -139,7 +149,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancel()
 
-	engineRuntime, postgresRuntime, cleanup, err := startContainers(ctx, root, *engineImage, *postgresImage, *maxConns)
+	engineRuntime, postgresRuntime, cleanup, err := startContainers(ctx, root, *engineImage, *postgresImage, *topology, *maxConns)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "start containers:", err)
 		os.Exit(1)
@@ -162,14 +172,17 @@ func main() {
 	analysis, explainErr := collectPostgresExplain(ctx, postgresRuntime.conn, *seedRows)
 	if explainErr != nil {
 		fmt.Fprintf(os.Stderr, "postgres query analyzer warning: %v\n", explainErr)
+		report.PostgresNote = explainErr.Error()
 	} else {
 		printPostgresExplain(analysis)
 	}
+	report.PostgresAnalysis = analysis
 
 	printConnectionStats("engine", engineRuntime.conn)
 	printConnectionStats("postgres", postgresRuntime.conn)
 
 	report.GeneratedAt = time.Now().UTC()
+	report.Topology = *topology
 	report.HostOS = runtime.GOOS
 	report.HostArch = runtime.GOARCH
 	report.GoVersion = runtime.Version()
@@ -196,7 +209,18 @@ type runtimeDB struct {
 	pprofEndpoint string
 }
 
-func startContainers(ctx context.Context, repoRoot, engineImage, postgresImage string, maxConns int) (*runtimeDB, *runtimeDB, func(), error) {
+func startContainers(ctx context.Context, repoRoot, engineImage, postgresImage, topology string, maxConns int) (*runtimeDB, *runtimeDB, func(), error) {
+	switch topology {
+	case defaultTopology:
+		return startSingleNodeContainers(ctx, repoRoot, engineImage, postgresImage, maxConns)
+	case threeNodeTopology:
+		return startThreeNodeReplicationContainers(ctx, repoRoot, engineImage, postgresImage, maxConns)
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupported topology %q", topology)
+	}
+}
+
+func startSingleNodeContainers(ctx context.Context, repoRoot, engineImage, postgresImage string, maxConns int) (*runtimeDB, *runtimeDB, func(), error) {
 	engineTag := engineImage
 	if engineTag == defaultEngineImage {
 		engineTag = "omag-benchmark-engine:local"
@@ -291,6 +315,391 @@ func startContainers(ctx context.Context, repoRoot, engineImage, postgresImage s
 	return engineDB, postgresDB, cleanupFn, nil
 }
 
+func startThreeNodeReplicationContainers(ctx context.Context, repoRoot, engineImage, postgresImage string, maxConns int) (*runtimeDB, *runtimeDB, func(), error) {
+	engineTag := engineImage
+	if engineTag == defaultEngineImage {
+		engineTag = "omag-benchmark-engine:local"
+	}
+
+	if err := runCommand(ctx, repoRoot, "docker", "build", "-t", engineTag, "-f", filepath.Join(repoRoot, "Dockerfile"), repoRoot); err != nil {
+		return nil, nil, nil, fmt.Errorf("build engine image: %w", err)
+	}
+
+	unique := strings.ReplaceAll(strconv.FormatInt(time.Now().UnixNano(), 36), "-", "")
+	benchDir := filepath.Join(os.TempDir(), fmt.Sprintf("omag-bench-%s", unique))
+	if err := os.MkdirAll(benchDir, 0o777); err != nil {
+		return nil, nil, nil, err
+	}
+	if err := os.Chmod(benchDir, 0o777); err != nil {
+		return nil, nil, nil, err
+	}
+
+	networkName := fmt.Sprintf("omag-bench-net-%s", unique)
+	if _, err := runOutput(ctx, repoRoot, "docker", "network", "create", networkName); err != nil {
+		_ = os.RemoveAll(benchDir)
+		return nil, nil, nil, fmt.Errorf("create docker network: %w", err)
+	}
+
+	containerNames := make([]string, 0, 6)
+	cleanup := func() {
+		for _, name := range containerNames {
+			_, _ = exec.Command("docker", "rm", "-f", name).CombinedOutput()
+		}
+		_, _ = exec.Command("docker", "network", "rm", networkName).CombinedOutput()
+		_ = os.RemoveAll(benchDir)
+	}
+
+	postgresPrimaryName := fmt.Sprintf("omag-bench-pg-primary-%s", unique)
+	postgresReplica1Name := fmt.Sprintf("omag-bench-pg-replica1-%s", unique)
+	postgresReplica2Name := fmt.Sprintf("omag-bench-pg-replica2-%s", unique)
+	postgresReplicas := []string{postgresReplica1Name, postgresReplica2Name}
+	containerNames = append(containerNames, postgresPrimaryName, postgresReplica1Name, postgresReplica2Name)
+
+	if _, err := runOutput(ctx, repoRoot, "docker", "run", "-d",
+		"--name", postgresPrimaryName,
+		"--network", networkName,
+		"-P",
+		"-e", "POSTGRES_DB=benchmark",
+		"-e", "POSTGRES_HOST_AUTH_METHOD=trust",
+		postgresImage,
+		"postgres",
+		"-c", "wal_level=replica",
+		"-c", "max_wal_senders=10",
+		"-c", "max_replication_slots=10",
+		"-c", "hot_standby=on",
+	); err != nil {
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("start postgres primary: %w", err)
+	}
+
+	postgresPort, err := discoverPublishedPort(ctx, postgresPrimaryName)
+	if err != nil {
+		cleanup()
+		return nil, nil, nil, err
+	}
+
+	primaryReadyDB, err := openDB(ctx, postgresPort, "benchmark", maxConns)
+	if err != nil {
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("connect postgres primary: %w", err)
+	}
+	_ = primaryReadyDB.conn.Close()
+
+	if _, err := runOutput(ctx, repoRoot, "docker", "exec", postgresPrimaryName, "sh", "-ceu",
+		`tmp_hba="$(mktemp)"
+cat <<'EOF' > "$tmp_hba"
+host replication all all trust
+host all all all trust
+EOF
+cat "$PGDATA/pg_hba.conf" >> "$tmp_hba"
+cat "$tmp_hba" > "$PGDATA/pg_hba.conf"
+rm -f "$tmp_hba"
+psql -U postgres -d benchmark -c "SELECT pg_reload_conf();"`); err != nil {
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("configure postgres primary replication access: %w", err)
+	}
+
+	for _, replica := range postgresReplicas {
+		script := fmt.Sprintf(`set -eu
+rm -rf "$PGDATA"/*
+until pg_basebackup -h %s -D "$PGDATA" -U postgres -Fp -Xs -R -P; do
+  sleep 1
+done
+chown -R postgres:postgres "$PGDATA"
+chmod -R 700 "$PGDATA"
+echo "hot_standby = on" >> "$PGDATA/postgresql.conf"
+echo "primary_conninfo = 'host=%s port=5432 user=postgres application_name=%s'" >> "$PGDATA/postgresql.auto.conf"
+exec su-exec postgres postgres
+`, postgresPrimaryName, postgresPrimaryName, replica)
+		if _, err := runOutput(ctx, repoRoot, "docker", "run", "-d",
+			"--name", replica,
+			"--network", networkName,
+			"--entrypoint", "sh",
+			"-e", "POSTGRES_DB=benchmark",
+			"-e", "POSTGRES_HOST_AUTH_METHOD=trust",
+			postgresImage,
+			"-ceu", script,
+		); err != nil {
+			cleanup()
+			return nil, nil, nil, fmt.Errorf("start postgres replica %s: %w", replica, err)
+		}
+	}
+
+	if err := waitForPostgresReplicas(ctx, postgresPort, maxConns, postgresReplicas); err != nil {
+		diagnostics := collectContainerStartupDiagnostics(postgresPrimaryName, postgresReplicas)
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("%w\n%s", err, diagnostics)
+	}
+
+	engineNames := []string{
+		fmt.Sprintf("omag-bench-engine-n0-%s", unique),
+		fmt.Sprintf("omag-bench-engine-n1-%s", unique),
+		fmt.Sprintf("omag-bench-engine-n2-%s", unique),
+	}
+	containerNames = append(containerNames, engineNames...)
+
+	for i, engineName := range engineNames {
+		nodeID := fmt.Sprintf("n%d", i)
+		nodeDir := filepath.Join(benchDir, "engine", nodeID)
+		if err := os.MkdirAll(filepath.Join(nodeDir, "lsm_data"), 0o777); err != nil {
+			cleanup()
+			return nil, nil, nil, err
+		}
+		if err := os.Chmod(nodeDir, 0o777); err != nil {
+			cleanup()
+			return nil, nil, nil, err
+		}
+		if err := os.Chmod(filepath.Join(nodeDir, "lsm_data"), 0o777); err != nil {
+			cleanup()
+			return nil, nil, nil, err
+		}
+
+		args := []string{"run", "-d", "--name", engineName, "--network", networkName, "-v", nodeDir + ":/data"}
+		if i == 0 {
+			args = append(args, "-p", "127.0.0.1::5432", "-p", "127.0.0.1::6060")
+		}
+		args = append(args,
+			engineTag,
+			"--listen", ":5432",
+			"--db", "/data/test.db",
+			"--lsm-data-dir", "/data/lsm_data",
+			"--wal", "/data/test.wal",
+			"--replication-strategy", "raft",
+			"--replication-backend", "grpc",
+			"--replication-local-node-id", nodeID,
+			"--replication-leader-node-id", "n0",
+			"--replication-current-term", "1",
+			"--replication-min-write-acks", "2",
+			"--replication-grpc-listen", ":7000",
+		)
+		peerParts := make([]string, 0, 2)
+		for j, peer := range engineNames {
+			if j == i {
+				continue
+			}
+			peerParts = append(peerParts, fmt.Sprintf("n%d=%s:7000", j, peer))
+		}
+		args = append(args, "--replication-peer-nodes", strings.Join(peerParts, ","))
+		if i == 0 {
+			args = append(args, "--pprof-listen", ":6060")
+		}
+
+		if _, err := runOutput(ctx, repoRoot, "docker", args...); err != nil {
+			cleanup()
+			return nil, nil, nil, fmt.Errorf("start engine node %s: %w", nodeID, err)
+		}
+	}
+
+	// Wait for engine nodes to be fully started before discovering ports
+	time.Sleep(3 * time.Second)
+
+	engineLeaderPort, err := discoverPublishedPortWithRetry(ctx, engineNames[0], 15)
+	if err != nil {
+		engineDiagnostics := collectContainerStartupDiagnostics(engineNames[0], engineNames[1:])
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("%w\n%s", err, engineDiagnostics)
+	}
+	enginePprofPort, err := discoverPublishedPortForWithRetry(ctx, engineNames[0], "6060/tcp", 15)
+	if err != nil {
+		cleanup()
+		return nil, nil, nil, err
+	}
+
+	postgresDB, err := openDB(ctx, postgresPort, "benchmark", maxConns)
+	if err != nil {
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("connect postgres primary: %w", err)
+	}
+	engineDB, err := openDB(ctx, engineLeaderPort, "postgres", maxConns)
+	if err != nil {
+		_ = postgresDB.conn.Close()
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("connect engine leader: %w", err)
+	}
+	engineDB.pprofEndpoint = fmt.Sprintf("127.0.0.1:%d", enginePprofPort)
+
+	cleanupFn := func() {
+		_ = engineDB.conn.Close()
+		_ = postgresDB.conn.Close()
+		cleanup()
+	}
+	return engineDB, postgresDB, cleanupFn, nil
+}
+
+func waitForPostgresReplicas(ctx context.Context, primaryPort, maxConns int, expectedApps []string) error {
+	db, err := openDB(ctx, primaryPort, "benchmark", maxConns)
+	if err != nil {
+		return fmt.Errorf("open postgres primary for replica wait: %w", err)
+	}
+	defer db.conn.Close()
+
+	expected := map[string]struct{}{}
+	for _, app := range expectedApps {
+		trimmed := strings.TrimSpace(app)
+		if trimmed == "" {
+			continue
+		}
+		expected[trimmed] = struct{}{}
+	}
+	if len(expected) == 0 {
+		return nil
+	}
+
+	deadline := time.Now().Add(90 * time.Second)
+	var lastRows []postgresReplicationRow
+	for time.Now().Before(deadline) {
+		rows, err := fetchPostgresReplicationRows(ctx, db.conn)
+		if err != nil {
+			time.Sleep(time.Second)
+			continue
+		}
+		lastRows = rows
+		ready, exactMatch, _, matchedNames := evaluatePostgresReplicaReadiness(expected, rows)
+		if ready {
+			if !exactMatch {
+				fmt.Fprintf(os.Stderr, "postgres replica readiness fallback: expected names=%v matched=%d/%d observed=%s\n",
+					expectedApps,
+					matchedNames,
+					len(expected),
+					formatPostgresReplicationRows(rows),
+				)
+			}
+			return nil
+		}
+		time.Sleep(time.Second)
+	}
+	return fmt.Errorf("timeout waiting for %d streaming postgres replicas (expected apps=%v, last observed=%s)",
+		len(expected),
+		expectedApps,
+		formatPostgresReplicationRows(lastRows),
+	)
+}
+
+type postgresReplicationRow struct {
+	ApplicationName string
+	State           string
+}
+
+func fetchPostgresReplicationRows(ctx context.Context, db *sql.DB) ([]postgresReplicationRow, error) {
+	rows, err := db.QueryContext(ctx, "SELECT application_name, state FROM pg_stat_replication")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]postgresReplicationRow, 0, 4)
+	for rows.Next() {
+		var appName, state string
+		if err := rows.Scan(&appName, &state); err != nil {
+			return nil, err
+		}
+		out = append(out, postgresReplicationRow{ApplicationName: strings.TrimSpace(appName), State: strings.TrimSpace(state)})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func evaluatePostgresReplicaReadiness(expected map[string]struct{}, rows []postgresReplicationRow) (ready bool, exactMatch bool, streamingCount int, matchedNames int) {
+	streamingByName := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if !strings.EqualFold(strings.TrimSpace(row.State), "streaming") {
+			continue
+		}
+		streamingCount++
+		if row.ApplicationName != "" {
+			streamingByName[row.ApplicationName] = struct{}{}
+		}
+	}
+
+	for app := range expected {
+		if _, ok := streamingByName[app]; ok {
+			matchedNames++
+		}
+	}
+	exactMatch = matchedNames == len(expected)
+	if exactMatch {
+		return true, true, streamingCount, matchedNames
+	}
+
+	// Some environments expose different application_name values; fall back to replica count.
+	if streamingCount >= len(expected) {
+		return true, false, streamingCount, matchedNames
+	}
+	return false, false, streamingCount, matchedNames
+}
+
+func formatPostgresReplicationRows(rows []postgresReplicationRow) string {
+	if len(rows) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(rows))
+	for _, row := range rows {
+		app := row.ApplicationName
+		if app == "" {
+			app = "<empty>"
+		}
+		state := row.State
+		if state == "" {
+			state = "<empty>"
+		}
+		parts = append(parts, fmt.Sprintf("%s:%s", app, state))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func collectContainerStartupDiagnostics(primary string, replicas []string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	containers := make([]string, 0, 1+len(replicas))
+	containers = append(containers, primary)
+	containers = append(containers, replicas...)
+
+	var b strings.Builder
+	b.WriteString("postgres startup diagnostics:")
+	for _, name := range containers {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		statusOut, statusErr := runOutput(ctx, "", "docker", "inspect", "--format", "{{.State.Status}}", name)
+		logOut, logErr := runOutput(ctx, "", "docker", "logs", "--tail", "40", name)
+
+		b.WriteString("\n- ")
+		b.WriteString(name)
+		if statusErr != nil {
+			b.WriteString(" status=<unavailable>")
+		} else {
+			b.WriteString(" status=")
+			b.WriteString(strings.TrimSpace(statusOut))
+		}
+		if logErr != nil {
+			b.WriteString(" logs=<unavailable>")
+			continue
+		}
+		logs := strings.TrimSpace(logOut)
+		if logs == "" {
+			b.WriteString(" logs=<empty>")
+			continue
+		}
+		b.WriteString(" logs=\n")
+		b.WriteString(indentLines(logs, "    "))
+	}
+	return b.String()
+}
+
+func indentLines(text, prefix string) string {
+	if text == "" {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	for i := range lines {
+		lines[i] = prefix + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
 func openDB(ctx context.Context, port int, dbName string, maxConns int) (*runtimeDB, error) {
 	cfg, err := pgx.ParseConfig(fmt.Sprintf("postgres://postgres@127.0.0.1:%d/%s?sslmode=disable", port, dbName))
 	if err != nil {
@@ -350,6 +759,32 @@ func discoverPublishedPortFor(ctx context.Context, containerName string, contain
 		return 0, err
 	}
 	return port, nil
+}
+
+func discoverPublishedPortWithRetry(ctx context.Context, containerName string, maxRetries int) (int, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		port, err := discoverPublishedPort(ctx, containerName)
+		if err == nil {
+			return port, nil
+		}
+		lastErr = err
+		time.Sleep(time.Second)
+	}
+	return 0, fmt.Errorf("port discovery failed after %d attempts for %s: %w", maxRetries, containerName, lastErr)
+}
+
+func discoverPublishedPortForWithRetry(ctx context.Context, containerName, containerPort string, maxRetries int) (int, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		port, err := discoverPublishedPortFor(ctx, containerName, containerPort)
+		if err == nil {
+			return port, nil
+		}
+		lastErr = err
+		time.Sleep(time.Second)
+	}
+	return 0, fmt.Errorf("port %s discovery failed after %d attempts for %s: %w", containerPort, maxRetries, containerName, lastErr)
 }
 
 func collectEngineCPUHotspots(ctx context.Context, engineDB *runtimeDB, seedRows, warmupOps, measuredOps int) ([]cpuHotspot, string, int, string) {
@@ -474,7 +909,7 @@ func parseCPUHotspotsFromProfile(ctx context.Context, profilePath string, limit 
 		if !ok {
 			continue
 		}
-		fn := fields[5]
+		fn := fields[len(fields)-1]
 		if !strings.Contains(fn, "github.com/rodrigo0345/omag/") {
 			continue
 		}
@@ -540,7 +975,7 @@ func parseNestedCPUHotspotsForFunction(ctx context.Context, profilePath, fn stri
 		if !ok {
 			continue
 		}
-		cand := fields[5]
+		cand := fields[len(fields)-1]
 		if cand == fn || !strings.Contains(cand, "github.com/rodrigo0345/omag/") {
 			continue
 		}
@@ -662,9 +1097,9 @@ func prepareTable(ctx context.Context, db sqlExecutor, table string, seedRows in
 			if batch.Len() > 0 {
 				batch.WriteString(";")
 			}
-			batch.WriteString(fmt.Sprintf(`INSERT INTO %s (id, category, status, payload) VALUES ('seed_%04d', '%s', '%s', '%s')`,
+			batch.WriteString(fmt.Sprintf(`INSERT INTO %s (id, category, status, payload) VALUES ('%s', '%s', '%s', '%s')`,
 				table,
-				j,
+				seedKey(table, j),
 				seedCategory(j),
 				seedStatus(j),
 				seedPayload(j),
@@ -682,26 +1117,26 @@ func buildSteps(table string, workload workloadName, seedRows, measuredOps int) 
 	for i := 0; i < measuredOps; i++ {
 		switch workload {
 		case workloadReads:
-			id := fmt.Sprintf("seed_%04d", i%seedRows)
+			id := seedKey(table, i%seedRows)
 			steps = append(steps, benchStep{isQuery: true, sql: fmt.Sprintf("SELECT payload FROM %s WHERE id = '%s'", table, id)})
 		case workloadWhere:
 			steps = append(steps, benchStep{isQuery: true, sql: fmt.Sprintf("SELECT id, payload FROM %s WHERE category = 'hot' AND status = 'active'", table)})
 		case workloadWrites:
 			steps = append(steps, benchStep{sql: fmt.Sprintf("INSERT INTO %s (id, category, status, payload) VALUES ('write_%04d', '%s', '%s', '%s')", table, i, seedCategory(i), seedStatus(i), seedPayload(1000+i))})
 		case workloadDelete:
-			id := fmt.Sprintf("seed_%04d", i%seedRows)
+			id := seedKey(table, i%seedRows)
 			steps = append(steps, benchStep{sql: fmt.Sprintf("DELETE FROM %s WHERE id = '%s'", table, id)})
 		case workloadMixed:
 			switch i % 4 {
 			case 0:
-				id := fmt.Sprintf("seed_%04d", i%seedRows)
+				id := seedKey(table, i%seedRows)
 				steps = append(steps, benchStep{isQuery: true, sql: fmt.Sprintf("SELECT payload FROM %s WHERE id = '%s'", table, id)})
 			case 1:
 				steps = append(steps, benchStep{isQuery: true, sql: fmt.Sprintf("SELECT id, payload FROM %s WHERE category = 'hot' AND status = 'active'", table)})
 			case 2:
 				steps = append(steps, benchStep{sql: fmt.Sprintf("INSERT INTO %s (id, category, status, payload) VALUES ('mix_write_%04d', '%s', '%s', '%s')", table, i, seedCategory(i), seedStatus(i), seedPayload(2000+i))})
 			default:
-				id := fmt.Sprintf("seed_%04d", i%seedRows)
+				id := seedKey(table, i%seedRows)
 				steps = append(steps, benchStep{sql: fmt.Sprintf("DELETE FROM %s WHERE id = '%s'", table, id)})
 			}
 		}
@@ -739,7 +1174,7 @@ func measureWorkload(ctx context.Context, db sqlExecutor, backend backendName, w
 		Warmup:     warmupOps,
 		Measured:   len(steps),
 		Total:      total,
-		Throughput: float64(len(steps)) / total.Seconds(),
+		Throughput: calculateThroughput(len(steps), total),
 		Avg:        avg,
 		P50:        percentile(sorted, 0.50),
 		P95:        percentile(sorted, 0.95),
@@ -750,6 +1185,13 @@ func measureWorkload(ctx context.Context, db sqlExecutor, backend backendName, w
 		result.Max = sorted[len(sorted)-1]
 	}
 	return result, nil
+}
+
+func calculateThroughput(ops int, elapsed time.Duration) float64 {
+	if ops <= 0 || elapsed <= 0 {
+		return 0
+	}
+	return float64(ops) / elapsed.Seconds()
 }
 
 func runSteps(ctx context.Context, db sqlExecutor, steps []benchStep) error {
@@ -878,11 +1320,21 @@ func collectPostgresExplain(ctx context.Context, db *sql.DB, seedRows int) ([]po
 		workload workloadName
 		stmtFn   func(table string) string
 	}{
-		{workload: workloadReads, stmtFn: func(table string) string { return fmt.Sprintf("SELECT payload FROM %s WHERE id = 'seed_%04d'", table, 0) }},
-		{workload: workloadWhere, stmtFn: func(table string) string { return fmt.Sprintf("SELECT id, payload FROM %s WHERE category = 'hot' AND status = 'active'", table) }},
-		{workload: workloadWrites, stmtFn: func(table string) string { return fmt.Sprintf("INSERT INTO %s (id, category, status, payload) VALUES ('explain_write_0001', 'hot', 'active', '%s')", table, seedPayload(seedRows+1)) }},
-		{workload: workloadDelete, stmtFn: func(table string) string { return fmt.Sprintf("DELETE FROM %s WHERE id = 'seed_%04d'", table, 1) }},
-		{workload: workloadMixed, stmtFn: func(table string) string { return fmt.Sprintf("SELECT id, payload FROM %s WHERE category = 'hot' AND status = 'active'", table) }},
+		{workload: workloadReads, stmtFn: func(table string) string {
+			return fmt.Sprintf("SELECT payload FROM %s WHERE id = '%s'", table, seedKey(table, 0))
+		}},
+		{workload: workloadWhere, stmtFn: func(table string) string {
+			return fmt.Sprintf("SELECT id, payload FROM %s WHERE category = 'hot' AND status = 'active'", table)
+		}},
+		{workload: workloadWrites, stmtFn: func(table string) string {
+			return fmt.Sprintf("INSERT INTO %s (id, category, status, payload) VALUES ('explain_write_0001', 'hot', 'active', '%s')", table, seedPayload(seedRows+1))
+		}},
+		{workload: workloadDelete, stmtFn: func(table string) string {
+			return fmt.Sprintf("DELETE FROM %s WHERE id = '%s'", table, seedKey(table, 1))
+		}},
+		{workload: workloadMixed, stmtFn: func(table string) string {
+			return fmt.Sprintf("SELECT id, payload FROM %s WHERE category = 'hot' AND status = 'active'", table)
+		}},
 	}
 
 	analyses := make([]postgresExplain, 0, len(queries))
@@ -893,8 +1345,14 @@ func collectPostgresExplain(ctx context.Context, db *sql.DB, seedRows int) ([]po
 		}
 		stmt := q.stmtFn(table)
 		explainStmt := "EXPLAIN (ANALYZE, BUFFERS, VERBOSE) " + stmt
-		rows, err := db.QueryContext(ctx, explainStmt)
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
+			return nil, fmt.Errorf("begin explain tx %s: %w", q.workload, err)
+		}
+
+		rows, err := tx.QueryContext(ctx, explainStmt)
+		if err != nil {
+			_ = tx.Rollback()
 			return nil, fmt.Errorf("explain %s: %w", q.workload, err)
 		}
 
@@ -903,15 +1361,20 @@ func collectPostgresExplain(ctx context.Context, db *sql.DB, seedRows int) ([]po
 			var line string
 			if err := rows.Scan(&line); err != nil {
 				_ = rows.Close()
+				_ = tx.Rollback()
 				return nil, fmt.Errorf("scan explain %s: %w", q.workload, err)
 			}
 			lines = append(lines, line)
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
+			_ = tx.Rollback()
 			return nil, fmt.Errorf("rows explain %s: %w", q.workload, err)
 		}
 		_ = rows.Close()
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			return nil, fmt.Errorf("rollback explain %s: %w", q.workload, err)
+		}
 
 		planning, execution, nodes := parseExplainLines(lines)
 		analyses = append(analyses, postgresExplain{
@@ -930,11 +1393,11 @@ func parseExplainLines(lines []string) (planningMS float64, executionMS float64,
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "Planning Time:") {
-			fmt.Sscanf(trimmed, "Planning Time: %f ms", &planningMS)
+			planningMS = parseExplainDuration(trimmed, "Planning Time:")
 			continue
 		}
 		if strings.HasPrefix(trimmed, "Execution Time:") {
-			fmt.Sscanf(trimmed, "Execution Time: %f ms", &executionMS)
+			executionMS = parseExplainDuration(trimmed, "Execution Time:")
 			continue
 		}
 		if strings.Contains(trimmed, "actual time=") {
@@ -945,6 +1408,18 @@ func parseExplainLines(lines []string) (planningMS float64, executionMS float64,
 		nodes = nodes[:8]
 	}
 	return planningMS, executionMS, nodes
+}
+
+func parseExplainDuration(line, prefix string) float64 {
+	fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(line, prefix)))
+	if len(fields) < 2 {
+		return 0
+	}
+	v, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return 0
+	}
+	return v
 }
 
 func printPostgresExplain(analysis []postgresExplain) {
@@ -1003,6 +1478,10 @@ func seedStatus(i int) string {
 
 func seedPayload(i int) string {
 	return fmt.Sprintf("payload-%04d-%s", i, strings.Repeat("x", 24))
+}
+
+func seedKey(table string, i int) string {
+	return fmt.Sprintf("%s_seed_%04d", strings.ReplaceAll(table, "-", "_"), i)
 }
 
 func findRepoRoot() (string, error) {
