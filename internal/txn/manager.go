@@ -9,7 +9,6 @@ import (
 	"github.com/rodrigo0345/omag/internal/storage/buffer"
 	wallog "github.com/rodrigo0345/omag/internal/txn/log"
 	"github.com/rodrigo0345/omag/internal/txn/rollback"
-	"github.com/rodrigo0345/omag/internal/txn/write_handler"
 )
 
 type TransactionManager struct {
@@ -17,7 +16,6 @@ type TransactionManager struct {
 	logManager        wallog.ILogManager
 	bufferPoolManager buffer.IBufferPoolManager
 	rollbackManager   *rollback.RollbackManager
-	writeHandler      write_handler.IWriteHandler
 }
 
 func NewTransactionManager(
@@ -28,28 +26,16 @@ func NewTransactionManager(
 ) *TransactionManager {
 	rollbackMgr := rollback.NewRollbackManager(bufferMgr)
 
-	var writeHandler write_handler.IWriteHandler
-	if logMgr != nil {
-		writeHandler = write_handler.NewDefaultWriteHandler(storage, rollbackMgr, bufferMgr, logMgr)
-	} else {
-		writeHandler = write_handler.NewMVCCWriteHandler(storage, bufferMgr, nil, rollbackMgr)
-	}
-
 	return &TransactionManager{
 		isolationManager:  isolationMgr,
 		logManager:        logMgr,
 		bufferPoolManager: bufferMgr,
 		rollbackManager:   rollbackMgr,
-		writeHandler:      writeHandler,
 	}
 }
 
 func (tm *TransactionManager) GetRollbackManager() *rollback.RollbackManager {
 	return tm.rollbackManager
-}
-
-func (tm *TransactionManager) GetWriteHandler() write_handler.IWriteHandler {
-	return tm.writeHandler
 }
 
 func (tm *TransactionManager) RollbackRemainingTransactions(ctx context.Context, recoveryState *wallog.RecoveryState) error {

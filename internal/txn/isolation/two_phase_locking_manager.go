@@ -1,5 +1,9 @@
 package isolation
 
+/*
+TODO: fix the two phase locking implementation
+I am not focusing on 2PL due to focus on MVCC for now
+
 import (
 	"bytes"
 	"fmt"
@@ -13,7 +17,6 @@ import (
 	"github.com/rodrigo0345/omag/internal/txn/log"
 	"github.com/rodrigo0345/omag/internal/txn/rollback"
 	"github.com/rodrigo0345/omag/internal/txn/txn_unit"
-	"github.com/rodrigo0345/omag/internal/txn/write_handler"
 )
 
 // DEPRECATED: This is a simplified 2PL manager for demonstration purposes. It does not handle deadlocks, timeouts, or other complexities of a production-grade 2PL implementation.
@@ -378,3 +381,5 @@ func (m *TwoPhaseLockingManager) releaseIndexLocks(transaction *txn_unit.Transac
 
 	return nil
 }
+
+*/

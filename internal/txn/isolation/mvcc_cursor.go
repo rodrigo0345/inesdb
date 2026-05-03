@@ -2,6 +2,7 @@ package isolation
 
 import (
 	"github.com/rodrigo0345/omag/internal/storage"
+	"github.com/rodrigo0345/omag/internal/txn"
 	"github.com/rodrigo0345/omag/internal/txn/txn_unit"
 )
 
@@ -16,31 +17,27 @@ type MVCCCursor struct {
 func (c *MVCCCursor) Next() bool {
 	for c.raw.Next() {
 		entry := c.raw.Entry()
-		userKey, xmin := c.manager.decodeKey(entry.Key)
-		uKeyStr := string(userKey)
+		userKey, txnID := c.manager.decodeKey(entry.Key)
+		keyStr := string(userKey)
 
-		// Skip if already processed a newer visible version
-		if c.seenKeys[uKeyStr] {
+		// If we've already returned a visible version for this key, skip all older ones
+		if c.seenKeys[keyStr] {
 			continue
 		}
 
-		// Visibility Check
-		if !c.manager.isVisible(c.txn, xmin) {
+		// Check visibility
+		if !c.manager.isVisible(c.txn, txn.TransactionID(txnID)) {
 			continue
 		}
 
-		// Metadata processing
-		c.seenKeys[uKeyStr] = true
-		opType := entry.Value[0]
+		// We found the latest visible version. Mark it so we don't look at older ones.
+		c.seenKeys[keyStr] = true
 
-		if opType == OpDelete {
-			continue
+		// Check if it's a tombstone
+		if entry.Value[0] == OpDelete {
+			continue // This version is a delete, move to the next unique UserKey
 		}
 
-		c.currentEntry = storage.ScanEntry{
-			Key:   userKey,
-			Value: entry.Value[1:],
-		}
 		return true
 	}
 	return false
