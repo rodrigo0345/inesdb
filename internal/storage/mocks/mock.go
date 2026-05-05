@@ -142,80 +142,83 @@ func (m *MockBufferManager) Close() error {
 
 // MockStorageEngine simulates a sorted storage backend (B-Tree/LSM)
 type MockStorageEngine struct {
-	data map[string][]byte
+      mu   sync.RWMutex // Protects the data map
+      data map[string][]byte
 }
 
 func NewMockStorage() *MockStorageEngine {
-	return &MockStorageEngine{
-		data: make(map[string][]byte),
-	}
+      return &MockStorageEngine{
+            data: make(map[string][]byte),
+      }
 }
 
 func (m *MockStorageEngine) Put(key []byte, value []byte) error {
-	m.data[string(key)] = value
-	return nil
+      m.mu.Lock()
+      defer m.mu.Unlock()
+      m.data[string(key)] = value
+      return nil
 }
 
 func (m *MockStorageEngine) Get(key []byte) ([]byte, error) {
-	val, ok := m.data[string(key)]
-	if !ok {
-		return nil, nil
-	}
-	return val, nil
+      m.mu.RLock()
+      defer m.mu.RUnlock()
+      val, ok := m.data[string(key)]
+      if !ok {
+            return nil, nil
+      }
+      return val, nil
 }
 
 func (m *MockStorageEngine) Delete(key []byte) error {
-	delete(m.data, string(key))
-	return nil
+      m.mu.Lock()
+      defer m.mu.Unlock()
+      delete(m.data, string(key))
+      return nil
 }
 
 func (m *MockStorageEngine) Scan(opts storage.ScanOptions) (storage.ICursor, error) {
-	// 1. Extract and sort keys to simulate B-Tree/LSM leaf order
-	keys := make([]string, 0, len(m.data))
-	for k := range m.data {
-		keys = append(keys, k)
-	}
+      m.mu.RLock()
+      defer m.mu.RUnlock()
 
-	if opts.Reverse {
-		sort.Sort(sort.Reverse(sort.StringSlice(keys)))
-	} else {
-		sort.Strings(keys)
-	}
+      // 1. Extract and sort keys
+      keys := make([]string, 0, len(m.data))
+      for k := range m.data {
+            keys = append(keys, k)
+      }
 
-	// 2. Filter by boundaries
-	var entries []storage.ScanEntry
-	for _, k := range keys {
-		keyBytes := []byte(k)
+      if opts.Reverse {
+            sort.Sort(sort.Reverse(sort.StringSlice(keys)))
+      } else {
+            sort.Strings(keys)
+      }
 
-		// Lower Bound Check
-		if opts.LowerBound != nil {
-			cmp := bytes.Compare(keyBytes, opts.LowerBound)
-			if cmp < 0 {
-				continue
-			}
-		}
+      // 2. Filter by boundaries
+      var entries []storage.ScanEntry
+      for _, k := range keys {
+            keyBytes := []byte(k)
 
-		// Upper Bound Check
-		if opts.UpperBound != nil {
-			cmp := bytes.Compare(keyBytes, opts.UpperBound)
-			if opts.Inclusive {
-				if cmp > 0 {
-					break
-				}
-			} else {
-				if cmp >= 0 {
-					break
-				}
-			}
-		}
+            if opts.LowerBound != nil {
+                  if bytes.Compare(keyBytes, opts.LowerBound) < 0 {
+                        continue
+                  }
+            }
 
-		entries = append(entries, storage.ScanEntry{
-			Key:   keyBytes,
-			Value: m.data[k],
-		})
-	}
+            if opts.UpperBound != nil {
+                  cmp := bytes.Compare(keyBytes, opts.UpperBound)
+                  if opts.Inclusive {
+                        if cmp > 0 { break }
+                  } else {
+                        if cmp >= 0 { break }
+                  }
+            }
 
-	return &MockCursor{entries: entries, index: -1}, nil
+            entries = append(entries, storage.ScanEntry{
+                  Key:   keyBytes,
+                  Value: m.data[k],
+            })
+      }
+
+      return &MockCursor{entries: entries, index: -1}, nil
 }
 
 // MockCursor implements storage.ICursor
