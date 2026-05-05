@@ -72,7 +72,7 @@ func TestTableManager_DeleteCleanup(t *testing.T) {
 	tm.CreateTable(ts, true)
 
 	physicalKey := []byte("p-key-v1")
-	payload := bytes.Join([][]byte{buildInt32(1), buildInt32(25), buildString("Bob")}, nil)
+	payload := buildRow(int32(1), int32(25), "Alice")
 
 	tm.Write(WriteOperation{"users", physicalKey, payload})
 
@@ -99,9 +99,10 @@ func TestTableManager_TwoHopScanAndFiltering(t *testing.T) {
 	ts, _, _ := setupTestSchema()
 	tm.CreateTable(ts, true)
 
-	// Alice (30) and Bob (25)
-	pKey1, row1 := []byte("pk1"), bytes.Join([][]byte{buildInt32(1), buildInt32(30), buildString("Alice")}, nil)
-	pKey2, row2 := []byte("pk2"), bytes.Join([][]byte{buildInt32(2), buildInt32(25), buildString("Bob")}, nil)
+	pKey1 := []byte("pk1")
+	row1 := buildRow(int32(1), int32(30), "Alice")
+	pKey2 := []byte("pk2")
+	row2 := buildRow(int32(2), int32(25), "Bob")
 
 	tm.Write(WriteOperation{"users", pKey1, row1})
 	tm.Write(WriteOperation{"users", pKey2, row2})
@@ -109,14 +110,8 @@ func TestTableManager_TwoHopScanAndFiltering(t *testing.T) {
 	// Scan 'idx_age' for Age > 28
 	opts := storage.ScanOptions{
 		ComplexFilter: storage.RowFilterFunction(func(row storage.ScanEntry) bool {
-			// Contact the schema to get the raw bytes for the "age" column
-			ageBytes, err := ts.GetColumnValue("age", row.Value)
-			if err != nil {
-				return false
-			}
-
-			// ageBytes now contains exactly the 4 bytes of the Int32
-			age := int32(binary.BigEndian.Uint32(ageBytes))
+			value := ts.DecodeRow("age", row.Value)
+			age := value.Int()
 			return age > 28
 		}),
 	}
@@ -156,7 +151,8 @@ func buildString(s string) []byte {
 
 func buildRow(values ...interface{}) []byte {
 	buf := new(bytes.Buffer)
-	buf.WriteByte(0x01) // OpInsert for the metadata column
+
+	buf.WriteByte(0x01)
 
 	for _, v := range values {
 		switch t := v.(type) {
@@ -244,11 +240,8 @@ func TestTableManager_ScanPagination(t *testing.T) {
 	var results []int32
 	for cursor.Next() {
 		entry := cursor.Entry()
-		score, err := ts.GetColumnValue("score", entry.Value)
-		if err != nil {
-			t.Fatalf("Failed to extract score: %v", err)
-		}
-		results = append(results, score)
+		score := ts.DecodeRow("score", entry.Value)
+		results = append(results, int32(score.Int()))
 	}
 
 	if len(results) != 2 {
@@ -262,9 +255,6 @@ func TestTableManager_ScanPagination(t *testing.T) {
 func TestTableManager_ComplexFilterLogic(t *testing.T) {
 	tm, _ := setupFullManager()
 
-	// Alice: Score 90, Active True
-	// Bob: Score 95, Active False
-	// Charlie: Score 50, Active True
 	tm.Write(WriteOperation{"players", []byte("p1"), buildRow(int32(1), int32(90), true, "Alice")})
 	tm.Write(WriteOperation{"players", []byte("p2"), buildRow(int32(2), int32(95), false, "Bob")})
 	tm.Write(WriteOperation{"players", []byte("p3"), buildRow(int32(3), int32(50), true, "Charlie")})
@@ -272,17 +262,20 @@ func TestTableManager_ComplexFilterLogic(t *testing.T) {
 	// Filter: Active == True AND Score > 60
 	opts := storage.ScanOptions{
 		ComplexFilter: storage.RowFilterFunction(func(row storage.ScanEntry) bool {
-			score := int32(binary.BigEndian.Uint32(row.Value[4:8]))
-			active := row.Value[8] != 0
-			return active && score > 60
-		}),
+			  // Use the DecodeRow method from the TableManager
+			  score := tm.DecodeRow("players", "score", row.Value).Int()
+			  active := tm.DecodeRow("players", "active", row.Value).Bool()
+
+			  return active && score > 60
+		    }),
 	}
 
 	cursor, _ := tm.Scan("players", "PRIMARY", opts)
 	count := 0
 	for cursor.Next() {
 		count++
-		if !bytes.Contains(cursor.Entry().Value, []byte("Alice")) {
+		aliceString := tm.DecodeRow("players", "name", cursor.Entry().Value).String()
+		if !bytes.Contains([]byte(aliceString), []byte("Alice")) {
 			t.Errorf("Expected Alice, got %s", cursor.Entry().Value)
 		}
 	}
@@ -340,9 +333,9 @@ func TestTableManager_ReverseScan(t *testing.T) {
 	cursor, _ := tm.Scan("players", "idx_score", opts)
 
 	cursor.Next()
-	scoreFirst := int32(binary.BigEndian.Uint32(cursor.Entry().Value[4:8]))
-	if scoreFirst != 20 {
-		t.Errorf("Reverse scan failed, expected score 20 first, got %d", scoreFirst)
+	scoreFirst := tm.DecodeRow("players", "score", cursor.Entry().Value)
+	if scoreFirst.Int() != 20 {
+		t.Errorf("Reverse scan failed, expected score 20 first, got %d", scoreFirst.Int())
 	}
 }
 

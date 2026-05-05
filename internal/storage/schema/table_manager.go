@@ -337,3 +337,15 @@ func extractProjectedColumns(schemaCols []Column, value []byte, projection []str
 
 	return projectedBuf, nil
 }
+
+func (tm *TableManager) DecodeRow(tableName string, columnName string, row []byte) Value {
+      tm.mu.RLock()
+      tableSchema, exists := tm.schemas[tableName]
+      tm.mu.RUnlock()
+
+      if !exists {
+            return Value{err: fmt.Errorf("table %s does not exist", tableName)}
+      }
+
+      return tableSchema.DecodeRow(columnName, row)
+}

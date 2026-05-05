@@ -1,6 +1,8 @@
 package schema
 
-import "github.com/rodrigo0345/omag/internal/storage"
+import (
+	"github.com/rodrigo0345/omag/internal/storage"
+)
 
 type IndexType int
 
@@ -17,19 +19,25 @@ type IndexDefinition struct {
 	Columns []string
 }
 
-type ITableSchema interface {
-	AddIndex(name string, columns []string, engine storage.IStorageEngine)
 
+type ITableSchema interface {
 	GetName() string
 	GetColumns() []Column
+
+	DecodeRow(columnName string, row []byte) Value
+	GetColumnTypeDecoder(columnName string) (Decoder, error)
+	ExtractIndexValues(value []byte) (map[string][]byte, error)
+
+	// Index Management
+	AddIndex(name string, columns []string, engine storage.IStorageEngine)
 	GetIndex(name string) *Index
 	GetAllIndexes() []*Index
 	GetIndexesByColumn(columnName string) []*Index
-	GetColumnValue(columnName string, row []byte) ([]byte, error)
 
 	ToJSON() ([]byte, error)
-	ExtractIndexValues(value []byte) (map[string][]byte, error)
 }
+
+
 
 type WriteOperation struct {
 	TableName string
@@ -55,6 +63,8 @@ type ITableManager interface {
 	CreateIndex(tableName string, index IndexDefinition, indexStorage storage.IStorageEngine) error
 	GetTableSchema(tableName string) (ITableSchema, error)
 	GetAllTables() []string
+
+	DecodeRow(tableName string, columnName string, row []byte) Value
 
 	Write(op WriteOperation) error
 	Delete(op DeleteOperation) error

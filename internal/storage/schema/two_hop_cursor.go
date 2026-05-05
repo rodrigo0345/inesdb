@@ -1,6 +1,8 @@
 package schema
 
-import "github.com/rodrigo0345/omag/internal/storage"
+import (
+	"github.com/rodrigo0345/omag/internal/storage"
+)
 
 type TwoHopCursor struct {
 	secondaryCursor storage.ICursor

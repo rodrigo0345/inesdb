@@ -2,7 +2,6 @@ package schema
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"sync"
 	"testing"
@@ -211,7 +210,7 @@ func TestTableManager_ScanOptionsStacking(t *testing.T) {
 	// Values: [30] (After limit 1)
 	opts := storage.ScanOptions{
 		ComplexFilter: storage.RowFilterFunction(func(row storage.ScanEntry) bool {
-			age := int32(binary.BigEndian.Uint32(row.Value[4:8]))
+			age := tm.DecodeRow("users", "age", row.Value).Int()
 			return age > 15
 		}),
 		Offset: 1,
@@ -220,10 +219,10 @@ func TestTableManager_ScanOptionsStacking(t *testing.T) {
 
 	cursor, _ := tm.Scan("users", "idx_age", opts)
 	cursor.Next()
-	age := int32(binary.BigEndian.Uint32(cursor.Entry().Value[4:8]))
+	age := tm.DecodeRow("users", "age", cursor.Entry().Value)
 
-	if age != 30 {
-		t.Errorf("stacked options failed. Got age %d, want 30", age)
+	if age.Int() != 30 {
+		t.Errorf("stacked options failed. Got age %d, want 30", age.Int())
 	}
 }
 

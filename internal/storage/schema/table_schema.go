@@ -4,7 +4,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"strconv"
+	"math"
+	"time"
 
 	"github.com/rodrigo0345/omag/internal/storage"
 )
@@ -14,13 +15,92 @@ type DataType uint8
 const TRANSACTIONAL_OP = "_txn_op"
 
 const (
-	TypeMetadata DataType = iota // Internal 1-byte column for transactional OpCodes
+	TypeMetadata DataType = iota
 	TypeInt32
 	TypeInt64
 	TypeFloat64
 	TypeBool
 	TypeString
 )
+// Decoder signature for low-level byte parsing.
+type Decoder func(row []byte, offset int) (value any, size int, err error)
+
+// TypeDecoders is the registry of how to turn bytes into Go types.
+var TypeDecoders = map[DataType]Decoder{
+	TypeMetadata: func(row []byte, offset int) (any, int, error) {
+		if offset >= len(row) { return nil, 0, fmt.Errorf("EOF") }
+		return row[offset], 1, nil
+	},
+	TypeBool: func(row []byte, offset int) (any, int, error) {
+		if offset >= len(row) { return nil, 0, fmt.Errorf("EOF") }
+		return row[offset] != 0, 1, nil
+	},
+	TypeInt32: func(row []byte, offset int) (any, int, error) {
+		if offset+4 > len(row) { return nil, 0, fmt.Errorf("EOF") }
+		return int32(binary.BigEndian.Uint32(row[offset:])), 4, nil
+	},
+	TypeInt64: func(row []byte, offset int) (any, int, error) {
+		if offset+8 > len(row) { return nil, 0, fmt.Errorf("EOF") }
+		return int64(binary.BigEndian.Uint64(row[offset:])), 8, nil
+	},
+	TypeFloat64: func(row []byte, offset int) (any, int, error) {
+		if offset+8 > len(row) { return nil, 0, fmt.Errorf("EOF") }
+		bits := binary.BigEndian.Uint64(row[offset:])
+		return math.Float64frombits(bits), 8, nil
+	},
+	TypeString: func(row []byte, offset int) (any, int, error) {
+		if offset+4 > len(row) { return nil, 0, fmt.Errorf("truncated string header") }
+		strLen := int(binary.BigEndian.Uint32(row[offset : offset+4]))
+		if offset+4+strLen > len(row) { return nil, 0, fmt.Errorf("truncated string data") }
+		return string(row[offset+4 : offset+4+strLen]), 4 + strLen, nil
+	},
+}
+
+// --- Value Wrapper (The "Easy to Use" part) ---
+
+// Value wraps the result of a decode operation, allowing for fluent access.
+type Value struct {
+	inner any
+	err   error
+}
+
+func (v Value) Int() int64 {
+	if v.err != nil { return 0 }
+	switch val := v.inner.(type) {
+	case int32: return int64(val)
+	case int64: return val
+	case byte:  return int64(val)
+	default:    return 0
+	}
+}
+
+func (v Value) String() string {
+	if v.err != nil { return "" }
+	s, _ := v.inner.(string)
+	return s
+}
+
+func (v Value) Float() float64 {
+	if v.err != nil { return 0.0 }
+	f, _ := v.inner.(float64)
+	return f
+}
+
+func (v Value) Bool() bool {
+	if v.err != nil { return false }
+	b, _ := v.inner.(bool)
+	return b
+}
+
+// Datetime assumes the underlying data is a Unix Timestamp (Int64).
+func (v Value) Datetime() time.Time {
+	if v.err != nil { return time.Time{} }
+	return time.Unix(v.Int(), 0)
+}
+
+func (v Value) Error() error { return v.err }
+
+// --- Table Schema Implementation ---
 
 type Column struct {
 	Name   string
@@ -41,7 +121,6 @@ type TableSchema struct {
 }
 
 func NewTableSchema(name string, columns []Column) *TableSchema {
-
 	actualColumns := append([]Column{
 		{Name: TRANSACTIONAL_OP, Type: TypeMetadata},
 	}, columns...)
@@ -53,28 +132,113 @@ func NewTableSchema(name string, columns []Column) *TableSchema {
 	}
 }
 
-func (ts *TableSchema) GetName() string {
-	return ts.Name
+// DecodeRow is the main user entry point. It handles offset walking and wrapping.
+func (ts *TableSchema) DecodeRow(columnName string, row []byte) Value {
+	if len(row) == 0 {
+		return Value{err: fmt.Errorf("cannot decode empty row")}
+	}
+
+	offset := 0
+	for i := range ts.Columns {
+		col := &ts.Columns[i]
+
+		if col.Name == columnName {
+			decoder, ok := TypeDecoders[col.Type]
+			if !ok {
+				return Value{err: fmt.Errorf("unsupported type %d", col.Type)}
+			}
+			val, _, err := decoder(row, offset)
+			if err != nil {
+				return Value{err: fmt.Errorf("decode failed for %s: %w", col.Name, err)}
+			}
+			return Value{inner: val}
+		}
+
+		size, err := ts.calculateSize(col.Type, row, offset)
+		if err != nil {
+			return Value{err: fmt.Errorf("skip failed at %s: %w", col.Name, err)}
+		}
+		offset += size
+	}
+
+	return Value{err: fmt.Errorf("column %q not found in schema", columnName)}
 }
 
-func (ts *TableSchema) GetColumns() []Column {
-	if len(ts.Columns) <= 1 {
-		return nil
+func (ts *TableSchema) calculateSize(t DataType, row []byte, offset int) (int, error) {
+	switch t {
+	case TypeMetadata, TypeBool:
+		return 1, nil
+	case TypeInt32:
+		return 4, nil
+	case TypeInt64, TypeFloat64:
+		return 8, nil
+	case TypeString:
+		if offset+4 > len(row) {
+			return 0, fmt.Errorf("truncated string header")
+		}
+		strLen := int(binary.BigEndian.Uint32(row[offset : offset+4]))
+		return 4 + strLen, nil
+	default:
+		return 0, fmt.Errorf("unknown type size")
 	}
+}
+
+func (ts *TableSchema) GetColumnTypeDecoder(columnName string) (Decoder, error) {
+	for i := range ts.Columns {
+		if ts.Columns[i].Name == columnName {
+			return TypeDecoders[ts.Columns[i].Type], nil
+		}
+	}
+	return nil, fmt.Errorf("column %s not found", columnName)
+}
+
+// ExtractIndexValues parses the row once and builds index keys.
+func (ts *TableSchema) ExtractIndexValues(row []byte) (map[string][]byte, error) {
+	colSlices := make(map[string][]byte)
+	offset := 0
+
+	for i := range ts.Columns {
+		col := &ts.Columns[i]
+		start := offset
+
+		_, size, err := TypeDecoders[col.Type](row, offset)
+		if err != nil {
+			return nil, fmt.Errorf("extract err at %s: %w", col.Name, err)
+		}
+
+		colSlices[col.Name] = row[start : offset+size]
+		offset += size
+	}
+
+	indexValues := make(map[string][]byte)
+	for name, idx := range ts.Indexes {
+		var keyBuf []byte
+		for _, colName := range idx.Columns {
+			b, ok := colSlices[colName]
+			if !ok {
+				return nil, fmt.Errorf("index %s refers to unknown column %s", name, colName)
+			}
+			keyBuf = append(keyBuf, b...)
+		}
+		indexValues[name] = keyBuf
+	}
+	return indexValues, nil
+}
+
+// --- Metadata Methods ---
+
+func (ts *TableSchema) GetName() string { return ts.Name }
+
+func (ts *TableSchema) GetColumns() []Column {
+	if len(ts.Columns) <= 1 { return nil }
 	return ts.Columns[1:]
 }
 
 func (ts *TableSchema) AddIndex(name string, columns []string, engine storage.IStorageEngine) {
-	ts.Indexes[name] = &Index{
-		Name:    name,
-		Columns: columns,
-		Engine:  engine,
-	}
+	ts.Indexes[name] = &Index{Name: name, Columns: columns, Engine: engine}
 }
 
-func (ts *TableSchema) GetIndex(name string) *Index {
-	return ts.Indexes[name]
-}
+func (ts *TableSchema) GetIndex(name string) *Index { return ts.Indexes[name] }
 
 func (ts *TableSchema) GetAllIndexes() []*Index {
 	indexes := make([]*Index, 0, len(ts.Indexes))
@@ -99,210 +263,9 @@ func (ts *TableSchema) ToJSON() ([]byte, error) {
 	for name, idx := range ts.Indexes {
 		idxMap[name] = idx.Columns
 	}
-
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"name":    ts.Name,
 		"columns": ts.Columns,
 		"indexes": idxMap,
 	})
-}
-
-type RowFormatError struct {
-	ColumnName string
-	Issue      string
-	Detail     string
-}
-
-func (e *RowFormatError) Error() string {
-	if e.ColumnName == "" {
-		return fmt.Sprintf("row format error: %s %s", e.Issue, e.Detail)
-	}
-	return fmt.Sprintf("invalid value for column '%s': %s %s", e.ColumnName, e.Issue, e.Detail)
-}
-
-func MinRowSize(columns []Column) int {
-	size := 0
-	for _, col := range columns {
-		switch col.Type {
-		case TypeInt32:
-			size += 4
-		case TypeInt64, TypeFloat64:
-			size += 8
-		case TypeBool, TypeMetadata:
-			size += 1
-		case TypeString:
-			size += 4
-		}
-	}
-	return size
-}
-
-func (ts *TableSchema) ExtractIndexValues(value []byte) (map[string][]byte, error) {
-	err := ValidateRowFormat(ts.Columns, value)
-	if err != nil {
-		return nil, fmt.Errorf("%s|%s|%s", err.Issue, err.Detail, err.ColumnName)
-	}
-
-	colBytes := make(map[string][]byte, len(ts.Columns))
-	offset := 0
-	payloadLen := len(value)
-
-	for i := range ts.Columns {
-		col := &ts.Columns[i]
-		start := offset
-
-		switch col.Type {
-		case TypeInt32:
-			offset += 4
-		case TypeInt64, TypeFloat64:
-			offset += 8
-		case TypeBool, TypeMetadata:
-			offset += 1
-		case TypeString:
-			if offset+4 > payloadLen {
-				return nil, fmt.Errorf("unexpected EOF reading string header for %q", col.Name)
-			}
-			strLen := int(binary.BigEndian.Uint32(value[offset : offset+4]))
-			offset += 4 + strLen
-		}
-
-		if offset > payloadLen {
-			return nil, fmt.Errorf("unexpected EOF reading column %q", col.Name)
-		}
-
-		colBytes[col.Name] = value[start:offset]
-	}
-
-	indexValues := make(map[string][]byte, len(ts.Indexes))
-	for name, idx := range ts.Indexes {
-		var keyBuf []byte
-		for _, colName := range idx.Columns {
-			b, ok := colBytes[colName]
-			if !ok {
-				// Safety check: users should not index the dummy column
-				return nil, fmt.Errorf("indexed column %q not found in schema", colName)
-			}
-			keyBuf = append(keyBuf, b...)
-		}
-		indexValues[name] = keyBuf
-	}
-
-	return indexValues, nil
-}
-
-func (ts *TableSchema) GetColumnValue(columnName string, row []byte) ([]byte, error) {
-	offset := 0
-	payloadLen := len(row)
-
-	for i := range ts.Columns {
-		col := &ts.Columns[i]
-		start := offset
-
-		// Calculate size of current column
-		var size int
-		switch col.Type {
-		case TypeMetadata, TypeBool:
-			size = 1
-		case TypeInt32:
-			size = 4
-		case TypeInt64, TypeFloat64:
-			size = 8
-		case TypeString:
-			if offset+4 > payloadLen {
-				return nil, fmt.Errorf("truncated string header for %s", col.Name)
-			}
-			strLen := int(binary.BigEndian.Uint32(row[offset : offset+4]))
-			size = 4 + strLen
-		}
-
-		if offset+size > payloadLen {
-			return nil, fmt.Errorf("row data too short for column %s", col.Name)
-		}
-
-		// If this is the column we want, return its slice
-		if col.Name == columnName {
-			return row[start : offset+size], nil
-		}
-
-		offset += size
-	}
-
-	return nil, fmt.Errorf("column %s not found in schema", columnName)
-}
-
-func ValidateRowFormat(columns []Column, value []byte) *RowFormatError {
-	payloadLen := len(value)
-
-	if payloadLen < MinRowSize(columns) {
-		return &RowFormatError{Issue: "payload too short", Detail: "below minimum possible row size"}
-	}
-
-	offset := 0
-
-	for i := range columns {
-		col := &columns[i]
-
-		switch col.Type {
-		case TypeMetadata:
-			// Just ensure the byte exists. We don't restrict the value
-			// because it can be OpInsert (0x01) or OpDelete (0x02).
-			if offset+1 > payloadLen {
-				return &RowFormatError{col.Name, "missing metadata", "expected 1 byte"}
-			}
-			offset += 1
-
-		case TypeInt32:
-			if offset+4 > payloadLen {
-				return &RowFormatError{col.Name, "missing data", "expected 4 bytes for Int32"}
-			}
-			offset += 4
-
-		case TypeInt64, TypeFloat64:
-			if offset+8 > payloadLen {
-				return &RowFormatError{col.Name, "missing data", "expected 8 bytes"}
-			}
-			offset += 8
-
-		case TypeBool:
-			if offset+1 > payloadLen {
-				return &RowFormatError{col.Name, "missing data", "expected 1 byte for Bool"}
-			}
-			if value[offset] > 1 {
-				return &RowFormatError{col.Name, "corrupt boolean", "value must be 0x00 or 0x01"}
-			}
-			offset++
-
-		case TypeString:
-			if offset+4 > payloadLen {
-				return &RowFormatError{col.Name, "missing string length header", "expected 4 bytes"}
-			}
-			strLen := int(binary.BigEndian.Uint32(value[offset : offset+4]))
-			offset += 4
-
-			if col.MaxLen > 0 && uint32(strLen) > col.MaxLen {
-				return &RowFormatError{
-					ColumnName: col.Name,
-					Issue:      "string exceeds maximum length",
-					Detail:     "max " + strconv.FormatUint(uint64(col.MaxLen), 10),
-				}
-			}
-			if offset+strLen > payloadLen {
-				return &RowFormatError{col.Name, "truncated string data",
-					"header claims " + strconv.Itoa(strLen) + " bytes"}
-			}
-			offset += strLen
-
-		default:
-			return &RowFormatError{col.Name, "unsupported data type",
-				"type ID " + strconv.Itoa(int(col.Type))}
-		}
-	}
-
-	if offset != payloadLen {
-		return &RowFormatError{
-			Issue:  "trailing garbage",
-			Detail: strconv.Itoa(payloadLen-offset) + " unexpected bytes",
-		}
-	}
-	return nil
 }
