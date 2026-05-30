@@ -1,12 +1,11 @@
 package database
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 
-	"github.com/rodrigo0345/omag/internal/concurrency"
 	"github.com/rodrigo0345/omag/internal/storage"
 	"github.com/rodrigo0345/omag/internal/storage/buffer"
 	"github.com/rodrigo0345/omag/internal/storage/lsm"
@@ -14,185 +13,92 @@ import (
 	"github.com/rodrigo0345/omag/internal/txn"
 	"github.com/rodrigo0345/omag/internal/txn/isolation"
 	"github.com/rodrigo0345/omag/internal/txn/log"
-	"github.com/rodrigo0345/omag/internal/txn/recovery"
 	"github.com/rodrigo0345/omag/internal/txn/rollback"
-	"github.com/rodrigo0345/omag/internal/txn/synchronization"
-	"github.com/rodrigo0345/omag/internal/txn/write_handler"
+	"github.com/rodrigo0345/omag/pkg/pkglog"
 )
 
 const (
-	DefaultBufferPoolSize   = 2048
-	DefaultReplacerCapacity = 2048
+	defaultBufferPoolSize = 2048
 )
 
-// Options configures the default MVCC + LSM engine.
-type Options struct {
-	DBPath           string
-	LSMDataDir       string
-	WALPath          string
-	BufferPoolSize   int
-	ReplacerCapacity int
+// Engine is the production MVCC + LSM-tree database.
+type Engine struct {
+	mvcc      *isolation.MVCCManager
+	tables    *schema.TableManager
+	walMgr    log.ILogManager
+	bufferPool buffer.IBufferPoolManager
+	lsmDataDir string
+	telemetry  *pkglog.TelemetryCollector
+
+	mu           sync.RWMutex
+	tableEngines map[string]storage.IStorageEngine
 }
 
-// Engine provides a small, opinionated database entry point.
-// It prefers MVCC transaction handling with an LSM-tree storage backend.
-type MVCCLSM struct {
-	isolationMgr txn.IIsolationManager
-	tableManager *schema.ITableManager
-}
+var _ Database = (*Engine)(nil)
 
-var _ Database = (*&MVCCLSM)(nil) // just to check if the interface is implemented correctly
-
-// OpenMVCCLSM opens a database engine using MVCC and an LSM-tree backend.
-func OpenMVCCLSM(opts Options) (_ *MVCCLSM, err error) {
+// OpenMVCCLSM opens the database. Called from main.go.
+func OpenMVCCLSM(opts Options) (*Engine, error) {
+	if opts.BufferPoolSize <= 0 {
+		opts.BufferPoolSize = defaultBufferPoolSize
+	}
 	if opts.DBPath == "" {
-		opts.DBPath = filepath.Join("/var/data/inesdb/", "test.db")
+		opts.DBPath = "omag.db"
 	}
 	if opts.LSMDataDir == "" {
-		opts.LSMDataDir = filepath.Join(".", "lsm_data")
+		opts.LSMDataDir = "lsm_data"
 	}
 	if opts.WALPath == "" {
-		opts.WALPath = filepath.Join(".", "test.wal")
-	}
-	if opts.BufferPoolSize <= 0 {
-		opts.BufferPoolSize = DefaultBufferPoolSize
-	}
-	if opts.ReplacerCapacity <= 0 {
-		opts.ReplacerCapacity = DefaultReplacerCapacity
+		opts.WALPath = "omag.wal"
 	}
 
 	diskMgr, err := buffer.NewDiskManager(opts.DBPath)
 	if err != nil {
-		return nil, fmt.Errorf("open disk manager: %w", err)
+		return nil, fmt.Errorf("disk manager: %w", err)
 	}
 
-	replacer := concurrency.NewClockReplacer(opts.ReplacerCapacity)
-	bufferPool := buffer.NewBufferPoolManagerWithReplacer(opts.BufferPoolSize, diskMgr, replacer)
-	defer func() {
-		if bufferPool != nil {
-			_ = bufferPool.Close()
-		}
-	}()
+	bufferPool := buffer.NewBufferPoolManager(opts.BufferPoolSize, diskMgr)
 
 	walMgr, err := log.NewWALManager(opts.WALPath)
 	if err != nil {
-		err = fmt.Errorf("open WAL manager: %w", err)
-		return nil, err
+		_ = diskMgr.Close()
+		return nil, fmt.Errorf("WAL manager: %w", err)
 	}
 
-	storageEngine := lsm.NewLSMTreeBackendWithDataDir(walMgr, bufferPool, opts.LSMDataDir)
+	tables := schema.NewTableManager()
 	rollbackMgr := rollback.NewRollbackManager(bufferPool)
-	writeHandler := write_handler.NewDefaultWriteHandler(storageEngine, rollbackMgr, bufferPool, walMgr)
-	writeHandler.SetReplicationIntentEnabled(false)
 
-	indexManagers := make(map[string]*schema.SecondaryIndexManager)
-	tableEngines := make(map[string]storage.IStorageEngine)
-	isolationMgr := isolation.NewMVCCManager(
-		walMgr,
-		bufferPool,
-		writeHandler,
-		rollbackMgr,
-		storageEngine,
-		indexManagers,
-	)
+	mvcc := isolation.NewMVCCManager(walMgr, bufferPool, rollbackMgr, tables, nil)
 
-	engine := &MVCCLSM{
-		isolationMgr: isolationMgr,
-		tableManager: schema.NewSchemaManager(storageEngine),
+	e := &Engine{
+		mvcc:         mvcc,
+		tables:       tables,
+		walMgr:       walMgr,
+		bufferPool:   bufferPool,
+		lsmDataDir:   opts.LSMDataDir,
+		telemetry:    pkglog.NewTelemetryCollector(),
+		tableEngines: make(map[string]storage.IStorageEngine),
 	}
-
-	if tableNames, err := engine.tableManager.LoadAllSchemas(); err != nil {
-		return nil, err
-	} else {
-		for _, tableName := range tableNames {
-			if err := engine.restoreTableBackend(tableName); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	recoveryCoordinator := recovery.NewDefaultRecoveryCoordinator(
-		walMgr,
-		storageEngine,
-		func(tableName string) storage.IStorageEngine {
-			if tableName == "" {
-				return storageEngine
-			}
-			return engine.tableStorageEngine(tableName)
-		},
-		bufferPool,
-		rollbackMgr,
-	)
-	recoveryState, err := recoveryCoordinator.RecoverFromCrash(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("startup recovery failed: %w", err)
-	}
-	isolationMgr.EnsureMinNextTxnID(recoveryState.MaxTxnID)
-
-	writeHandler.SetStorageResolver(func(tableName string) storage.IStorageEngine {
-		if tableName == "" {
-			return storageEngine
-		}
-		return engine.tableStorageEngine(tableName)
-	})
-	isolationMgr.SetStorageResolver(func(tableName string) storage.IStorageEngine {
-		if tableName == "" {
-			return storageEngine
-		}
-		return engine.tableStorageEngine(tableName)
-	})
-	bufferPool = nil
-
-	return engine, nil
-}
-
-func (e *Engine) restoreTableBackend(tableName string) error {
-	tableSchema, err := e.schemaManager.GetTable(tableName)
-	if err != nil {
-		return err
-	}
-
-	tableEngine := lsm.NewLSMTreeBackendWithDataDir(e.walMgr, e.bufferPool, filepath.Join(e.lsmDataDir, "tables", fmt.Sprintf("table_%s", tableName)))
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.tableEngines[tableName] = tableEngine
-	e.indexManagers[tableName] = schema.NewSecondaryIndexManager(tableName, tableSchema, tableEngine)
-	return nil
+	return e, nil
 }
 
 func (e *Engine) Close() error {
-	if e == nil {
-		return nil
-	}
-
-	var errs []error
 	e.mu.RLock()
-	tableEngines := make([]storage.IStorageEngine, 0, len(e.tableEngines))
-	for _, engine := range e.tableEngines {
-		tableEngines = append(tableEngines, engine)
+	engines := make([]storage.IStorageEngine, 0, len(e.tableEngines))
+	for _, eng := range e.tableEngines {
+		engines = append(engines, eng)
 	}
 	e.mu.RUnlock()
 
-	for _, engine := range tableEngines {
-		if closer, ok := engine.(interface{ Close() error }); ok {
-			if err := closer.Close(); err != nil {
+	var errs []error
+	for _, eng := range engines {
+		if c, ok := eng.(interface{ Close() error }); ok {
+			if err := c.Close(); err != nil {
 				errs = append(errs, err)
 			}
 		}
 	}
-	if closer, ok := e.storageEngine.(interface{ Close() error }); ok {
-		if err := closer.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
 	if e.walMgr != nil {
 		if err := e.walMgr.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	if e.replicator != nil {
-		if err := e.replicator.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -204,254 +110,101 @@ func (e *Engine) Close() error {
 	return errors.Join(errs...)
 }
 
-func (e *Engine) StorageEngine() storage.IStorageEngine {
-	return e.storageEngine
-}
-
-func (e *Engine) TableStorageEngine(tableName string) storage.IStorageEngine {
-	return e.tableStorageEngine(tableName)
-}
-
-func (e *Engine) ReplicationCoordinator() synchronization.ReplicationCoordinator {
-	return e.replicator
-}
-
-func (e *Engine) ReplicationConfig() synchronization.ReplicationConfig {
-	return e.replicationConfig
-}
-
-func (e *Engine) BufferPoolManager() buffer.IBufferPoolManager {
-	return e.bufferPool
-}
-
-func (e *Engine) DiskManager() *buffer.DiskManager {
-	return e.diskMgr
-}
-
-func (e *Engine) WALManager() log.ILogManager {
-	return e.walMgr
-}
-
-func (e *Engine) IsolationManager() txn.IIsolationManager {
-	return e.isolationMgr
-}
-
-func (e *Engine) SchemaManager() *schema.SchemaManager {
-	return e.schemaManager
-}
-
-func (e *Engine) RollbackManager() *rollback.RollbackManager {
-	return e.rollbackMgr
-}
+// --- Transaction lifecycle ---
 
 func (e *Engine) BeginTransaction(isolationLevel uint8) int64 {
-	return e.isolationMgr.BeginTransaction(isolationLevel)
-}
-
-func (e *Engine) Read(txnID int64, tableName string, key []byte) ([]byte, error) {
-	if e.replicationEnabled && e.replicator != nil {
-		tableName, _, _ := e.isolationMgr.GetTransactionTableContext(txnID)
-		if err := e.replicator.SynchronizeRead(context.Background(), txnID, tableName, key); err != nil {
-			return nil, fmt.Errorf("replication read sync failed: %w", err)
-		}
-	}
-	return e.isolationMgr.Read(txnID, key)
-}
-
-func (e *Engine) Scan(txnID int64, lower []byte, upper []byte, filterCallback storage.RowFilterFunction) ([]storage.ScanEntry, error) {
-	if e == nil || e.storageEngine == nil {
-		return nil, fmt.Errorf("storage engine is nil")
-	}
-
-	tableName, _, _ := e.isolationMgr.GetTransactionTableContext(txnID)
-
-	tableEngine := e.tableStorageEngine(tableName)
-	entries, err := tableEngine.Scan(lower, upper, filterCallback)
-	if err != nil {
-		return nil, fmt.Errorf("scan failed: %w", err)
-	}
-	return entries, nil
-}
-
-func (e *Engine) Write(txnID int64, key []byte, value []byte) error {
-	if err := e.isolationMgr.Write(txnID, key, value); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (e *Engine) Delete(txnID int64, key []byte) error {
-	if err := e.isolationMgr.Delete(txnID, key); err != nil {
-		return err
-	}
-	return nil
+	return e.mvcc.BeginTransaction(isolationLevel)
 }
 
 func (e *Engine) Commit(txnID int64) error {
-	var operations []log.RecoveryOperation
-	if e.walMgr != nil {
-		operations = e.walMgr.GetTransactionOperations(uint64(txnID))
+	err := e.mvcc.Commit(txn.TransactionID(txnID))
+	if err != nil {
+		// MVCC write-write conflict causes abort — flag it in telemetry.
+		e.telemetry.RecordConflict(txnID)
 	}
-	if e.replicationEnabled && e.replicator != nil {
-		if err := e.replicator.Commit(context.Background(), txnID, operations); err != nil {
-			_ = e.isolationMgr.Abort(txnID)
-			return fmt.Errorf("replication commit failed: %w", err)
-		}
-	}
-	if err := e.isolationMgr.Commit(txnID); err != nil {
-		if e.replicationEnabled && e.replicator != nil {
-			_ = e.replicator.Abort(context.Background(), txnID)
-		}
-		return err
-	}
-	if e.walMgr != nil {
-		e.walMgr.CleanupTransactionOperations(uint64(txnID))
-	}
-	return nil
+	return err
 }
 
 func (e *Engine) Abort(txnID int64) error {
-	localErr := e.isolationMgr.Abort(txnID)
-	var replicationErr error
-	if e.replicationEnabled && e.replicator != nil {
-		replicationErr = e.replicator.Abort(context.Background(), txnID)
-	}
-	return errors.Join(localErr, replicationErr)
+	e.telemetry.RecordAbort(txnID)
+	return e.mvcc.Abort(txn.TransactionID(txnID))
 }
 
-func (e *Engine) UpdateRaftLeadership(localNodeID string, leaderNodeID string, term uint64) error {
-	if e == nil {
-		return fmt.Errorf("engine is nil")
-	}
-	raftReplicator, ok := e.replicator.(*synchronization.RaftReplicationCoordinator)
-	if !ok {
-		return fmt.Errorf("raft leadership update rejected: replication strategy is %q", e.replicationConfig.Strategy)
-	}
-	if err := raftReplicator.UpdateLeadership(localNodeID, leaderNodeID, term); err != nil {
-		return err
-	}
+// --- DML ---
 
-	e.mu.Lock()
-	if localNodeID != "" {
-		e.replicationConfig.LocalNodeID = localNodeID
-	}
-	e.replicationConfig.LeaderNodeID = leaderNodeID
-	if term > 0 {
-		e.replicationConfig.CurrentTerm = term
-	}
-	e.mu.Unlock()
-	return nil
+func (e *Engine) Read(txnID int64, tableName string, key []byte) ([]byte, error) {
+	return e.mvcc.Read(txn.TransactionID(txnID), tableName, "PRIMARY", key)
 }
 
-func (e *Engine) CreateTable(tableSchema *schema.TableSchema) error {
-	if tableSchema == nil {
-		return fmt.Errorf("table schema is nil")
-	}
-	if e == nil {
-		return fmt.Errorf("engine is nil")
+func (e *Engine) Scan(txnID int64, tableName string, opts storage.ScanOptions) (storage.ICursor, error) {
+	return e.mvcc.Scan(txn.TransactionID(txnID), tableName, "PRIMARY", opts)
+}
+
+func (e *Engine) Write(txnID int64, tableName string, key []byte, value []byte) error {
+	return e.mvcc.Write(txn.TransactionID(txnID), tableName, "PRIMARY", key, value)
+}
+
+func (e *Engine) Delete(txnID int64, tableName string, key []byte) error {
+	return e.mvcc.Delete(txn.TransactionID(txnID), tableName, "PRIMARY", key)
+}
+
+// --- DDL ---
+
+func (e *Engine) CreateTable(ts *schema.TableSchema) error {
+	tableDir := filepath.Join(e.lsmDataDir, "tables", ts.Name)
+	tableEngine := lsm.NewLSMTreeBackendWithDataDir(e.walMgr, e.bufferPool, tableDir)
+
+	if ts.GetIndex("PRIMARY") == nil {
+		userCols := ts.GetColumns()
+		if len(userCols) == 0 {
+			_ = tableEngine.Close()
+			return fmt.Errorf("table %s has no columns", ts.Name)
+		}
+		ts.AddIndex("PRIMARY", []string{userCols[0].Name}, tableEngine)
+	} else {
+		idx := ts.GetIndex("PRIMARY")
+		idx.Engine = tableEngine
 	}
 
-	tableEngine := lsm.NewLSMTreeBackendWithDataDir(e.walMgr, e.bufferPool, filepath.Join(e.lsmDataDir, "tables", fmt.Sprintf("table_%s", tableSchema.Name)))
-
-	if err := e.schemaManager.CreateTable(tableSchema); err != nil {
+	if err := e.tables.CreateTable(ts, false); err != nil {
 		_ = tableEngine.Close()
 		return err
 	}
 
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.tableEngines[tableSchema.Name] = tableEngine
-	e.indexManagers[tableSchema.Name] = schema.NewSecondaryIndexManager(tableSchema.Name, tableSchema, tableEngine)
+	e.tableEngines[ts.Name] = tableEngine
+	e.mu.Unlock()
 	return nil
 }
 
 func (e *Engine) DropTable(tableName string) error {
-	if err := e.schemaManager.DropTable(tableName); err != nil {
+	if err := e.tables.DropTable(tableName); err != nil {
 		return err
 	}
 
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	delete(e.indexManagers, tableName)
-	if engine, ok := e.tableEngines[tableName]; ok {
-		delete(e.tableEngines, tableName)
-		if closer, ok := engine.(interface{ Close() error }); ok {
-			if err := closer.Close(); err != nil {
-				return err
-			}
+	eng, ok := e.tableEngines[tableName]
+	delete(e.tableEngines, tableName)
+	e.mu.Unlock()
+
+	if ok {
+		if c, ok := eng.(interface{ Close() error }); ok {
+			return c.Close()
 		}
 	}
 	return nil
 }
 
-func (e *Engine) GetTableSchema(tableName string) (*schema.TableSchema, error) {
-	return e.schemaManager.GetTable(tableName)
+func (e *Engine) GetTableSchema(tableName string) (schema.ITableSchema, error) {
+	return e.tables.GetTableSchema(tableName)
 }
 
-func (e *Engine) CreateIndex(tableName string, indexName string, indexType schema.IndexType, columns []string, isUnique bool) error {
-	if err := e.schemaManager.AddIndex(tableName, indexName, indexType, columns, isUnique); err != nil {
-		return err
-	}
-
-	tableSchema, err := e.schemaManager.GetTable(tableName)
-	if err != nil {
-		return err
-	}
-
-	storageEngine := e.tableStorageEngine(tableName)
-	e.mu.Lock()
-	if storageEngine == nil {
-		storageEngine = e.storageEngine
-	}
-	e.indexManagers[tableName] = schema.NewSecondaryIndexManager(tableName, tableSchema, storageEngine)
-	e.mu.Unlock()
-	return nil
+func (e *Engine) ListTables() []string {
+	return e.tables.GetAllTables()
 }
 
-func (e *Engine) DropIndex(tableName string, indexName string) error {
-	if err := e.schemaManager.RemoveIndex(tableName, indexName); err != nil {
-		return err
-	}
+// --- Observability ---
 
-	tableSchema, err := e.schemaManager.GetTable(tableName)
-	if err != nil {
-		return err
-	}
-
-	storageEngine := e.tableStorageEngine(tableName)
-	e.mu.Lock()
-	if storageEngine == nil {
-		storageEngine = e.storageEngine
-	}
-	e.indexManagers[tableName] = schema.NewSecondaryIndexManager(tableName, tableSchema, storageEngine)
-	e.mu.Unlock()
-	return nil
-}
-
-func (e *Engine) RecordTransactionOperation(txnID uint64, tableName string, opType log.RecordType, key []byte, value []byte) {
-	if e == nil || e.walMgr == nil {
-		return
-	}
-	e.walMgr.AddTransactionOperation(txnID, tableName, opType, key, value)
-}
-
-func (e *Engine) tableStorageEngine(tableName string) storage.IStorageEngine {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.tableEngines[tableName]
-}
-
-func (e *Engine) GetIndexManager(tableName string) (*schema.SecondaryIndexManager, bool) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	mgr, ok := e.indexManagers[tableName]
-	return mgr, ok
-}
-
-func (e *Engine) Partition(tableName string, partitionKey string) error {
-	panic("Not implemented")
-}
-
-func (e *Engine) Replicate(tableName string, targetNodeID string) error {
-	panic("Not implemented")
+func (e *Engine) GetTelemetry() *pkglog.TelemetryCollector {
+	return e.telemetry
 }

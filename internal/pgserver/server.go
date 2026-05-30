@@ -1,80 +1,45 @@
 package pgserver
 
 import (
+	"context"
+	"errors"
 	"net"
 
-	"github.com/ajitpratap0/GoSQLX/pkg/gosqlx"
-	"github.com/ajitpratap0/GoSQLX/pkg/sql/ast"
-	"github.com/jackc/pgproto3/v2"
 	"github.com/rodrigo0345/omag/internal/database"
-	"github.com/rodrigo0345/omag/pkg/log"
+	"github.com/rodrigo0345/omag/pkg/pkglog"
 )
 
-type ExecutionResult struct {
-	Messages []pgproto3.BackendMessage
-	Err      error
+// Server accepts incoming psql connections and spawns a Session per connection.
+type Server struct {
+	db database.Database
 }
 
-type Session struct {
-	conn     net.Conn
-	be       *pgproto3.Backend
-	db       database.Database
-	analyzer *log.Analyzer // easy debugging for operations
+// New creates a pgwire server backed by the given database engine.
+func New(db database.Database) *Server {
+	return &Server{db: db}
 }
 
-func NewSession(conn net.Conn, db database.Database) *Session {
+// Serve accepts connections from ln until ctx is cancelled.
+func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
+	go func() {
+		<-ctx.Done()
+		_ = ln.Close()
+	}()
 
-	chunkReader := pgproto3.NewChunkReader(conn)
-	ioWriter := conn
-
-	be := pgproto3.NewBackend(chunkReader, ioWriter)
-	return &Session{
-		conn:     conn,
-		be:       be,
-		db:       db,
-		analyzer: log.NewAnalyzer(),
-	}
-}
-
-func (s *Session) Run() error {
 	for {
-		msg, err := s.be.Receive()
+		conn, err := ln.Accept()
 		if err != nil {
-			return err
-		}
-
-		switch m := msg.(type) {
-		case *pgproto3.Query:
-			s.handleQuery(m.String)
-			break
-		case *pgproto3.Terminate:
-			return nil
-		}
-	}
-}
-
-func (s *Session) handleQuery(sqlQuery string) {
-	stmts, err := gosqlx.Parse(sqlQuery)
-
-	if err != nil {
-		s.sendError(err)
-		return
-	}
-
-	for _, stmt := range stmts.Statements {
-		switch q := stmt.(type) {
-		case *ast.SelectStatement:
-			selectStmt := &Select{
-				session: s,
+			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
+				return nil
 			}
-			selectStmt.exec(q)
+			pkglog.Warn("[pgserver] accept error: %v", err)
+			continue
 		}
+		go func(c net.Conn) {
+			sess := newSession(c, srv.db)
+			if err := sess.Run(); err != nil {
+				pkglog.Debug("[pgserver] session ended: %v", err)
+			}
+		}(conn)
 	}
-}
-
-func (s *Session) sendError(err error) {
-	_ = s.be.Send(&pgproto3.ErrorResponse{
-		Severity: "ERROR",
-		Message:  err.Error(),
-	})
 }

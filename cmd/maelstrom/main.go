@@ -11,10 +11,9 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/rodrigo0345/omag/internal/database"
-	"github.com/rodrigo0345/omag/internal/txn"
-	"github.com/rodrigo0345/omag/internal/txn/synchronization"
-	"github.com/rodrigo0345/omag/internal/txn/txn_unit"
+	"github.com/rodrigo0345/omag/src/engine"
+	"github.com/rodrigo0345/omag/src/replication"
+	"github.com/rodrigo0345/omag/src/engine/txn"
 )
 
 // MaelstromMessage represents a Maelstrom protocol message
@@ -34,10 +33,9 @@ type Node struct {
 	pendingMu       sync.Mutex
 	pendingProxies   map[int]pendingProxyTxn
 
-	replicationConfig synchronization.ReplicationConfig
+	replicationConfig replication.ReplicationConfig
 
-	db         database.Database
-	txnManager txn.IIsolationManager
+	db engine.Database
 }
 
 type pendingProxyTxn struct {
@@ -47,7 +45,7 @@ type pendingProxyTxn struct {
 
 type NodeOptions struct {
 	DataDir           string
-	ReplicationConfig synchronization.ReplicationConfig
+	ReplicationConfig replication.ReplicationConfig
 }
 
 // NewNode creates a new Maelstrom node
@@ -58,10 +56,10 @@ func NewNode() *Node {
 func NewNodeWithOptions(opts NodeOptions) *Node {
 	replCfg := opts.ReplicationConfig
 	if replCfg.Strategy == "" {
-		replCfg = synchronization.DefaultReplicationConfig()
+		replCfg = replication.DefaultReplicationConfig()
 	}
 	if replCfg.Backend == "" {
-		replCfg.Backend = synchronization.ReplicationBackendNoop
+		replCfg.Backend = replication.ReplicationBackendNoop
 	}
 	return &Node{
 		msgID:             0,
@@ -96,17 +94,15 @@ func (n *Node) Start() error {
 				n.dataDir = tmpDir
 			}
 
-			engine, err := database.OpenMVCCLSM(database.Options{
-				DBPath:            filepath.Join(n.dataDir, "test.db"),
-				LSMDataDir:        filepath.Join(n.dataDir, "lsm_data"),
-				WALPath:           filepath.Join(n.dataDir, "test.wal"),
-				ReplicationConfig: n.replicationConfig,
+			engine, err := engine.OpenMVCCLSM(engine.Options{
+				DBPath:     filepath.Join(n.dataDir, "test.db"),
+				LSMDataDir: filepath.Join(n.dataDir, "lsm_data"),
+				WALPath:    filepath.Join(n.dataDir, "test.wal"),
 			})
 			if err != nil {
 				continue
 			}
 			n.db = engine
-			n.txnManager = engine.IsolationManager()
 			if err := n.bootstrapRaftLeadershipFromInit(msg.Body); err != nil {
 				continue
 			}
@@ -195,7 +191,7 @@ func (n *Node) executeTxnWithError(txnOps []any) ([]any, error) {
 		return results, fmt.Errorf("database is not initialized")
 	}
 
-	txnID := n.db.BeginTransaction(txn_unit.SERIALIZABLE, "", nil)
+	txnID := n.db.BeginTransaction(txn.SERIALIZABLE)
 	committed := false
 	defer func() {
 		if !committed {
@@ -219,7 +215,7 @@ func (n *Node) executeTxnWithError(txnOps []any) ([]any, error) {
 
 		switch f {
 		case "r":
-			val, err := n.db.Read(txnID, []byte(k))
+			val, err := n.db.Read(txnID, "kv", []byte(k))
 			if err != nil {
 				results = append(results, []any{"r", op[1], nil})
 				continue
@@ -237,7 +233,7 @@ func (n *Node) executeTxnWithError(txnOps []any) ([]any, error) {
 				results = append(results, []any{"w", op[1], nil})
 				continue
 			}
-			err = n.db.Write(txnID, []byte(k), byteData)
+			err = n.db.Write(txnID, "kv", []byte(k), byteData)
 			if err != nil {
 				results = append(results, []any{"w", op[1], nil})
 				continue
@@ -256,7 +252,7 @@ func (n *Node) executeTxnWithError(txnOps []any) ([]any, error) {
 }
 
 func (n *Node) shouldProxyTxn() bool {
-	if n.replicationConfig.Strategy != synchronization.SyncStrategyRaft {
+	if n.replicationConfig.Strategy != replication.SyncStrategyRaft {
 		return false
 	}
 	return n.replicationConfig.LocalNodeID != "" && n.replicationConfig.LeaderNodeID != "" && n.replicationConfig.LocalNodeID != n.replicationConfig.LeaderNodeID
@@ -426,9 +422,7 @@ func (n *Node) applyRaftLeadershipUpdate(body map[string]any) error {
 	if localNodeID == "" {
 		localNodeID = n.nodeID
 	}
-	if err := n.db.UpdateRaftLeadership(localNodeID, leaderNodeID, term); err != nil {
-		return err
-	}
+	// Raft leadership update is not supported; update config state only.
 	n.replicationConfig.LocalNodeID = localNodeID
 	n.replicationConfig.LeaderNodeID = leaderNodeID
 	if term > 0 {
@@ -438,7 +432,7 @@ func (n *Node) applyRaftLeadershipUpdate(body map[string]any) error {
 }
 
 func (n *Node) bootstrapRaftLeadershipFromInit(body map[string]any) error {
-	if n == nil || n.db == nil || n.replicationConfig.Strategy != synchronization.SyncStrategyRaft {
+	if n == nil || n.db == nil || n.replicationConfig.Strategy != replication.SyncStrategyRaft {
 		return nil
 	}
 
@@ -456,9 +450,6 @@ func (n *Node) bootstrapRaftLeadershipFromInit(body map[string]any) error {
 		term = 1
 	}
 
-	if err := n.db.UpdateRaftLeadership(localNodeID, leaderNodeID, term); err != nil {
-		return err
-	}
 	n.replicationConfig.LocalNodeID = localNodeID
 	n.replicationConfig.LeaderNodeID = leaderNodeID
 	n.replicationConfig.CurrentTerm = term
@@ -513,18 +504,18 @@ func parseUint64Field(raw any) (uint64, error) {
 
 func parseNodeOptionsFromFlags() NodeOptions {
 	dataDir := flag.String("data-dir", "", "base directory for db/wal/lsm files (defaults to temp dir per node)")
-	strategy := flag.String("replication-strategy", string(synchronization.SyncStrategyStandalone), "replication strategy (standalone, raft)")
-	backend := flag.String("replication-backend", string(synchronization.ReplicationBackendNoop), "replication backend (noop, maelstrom, grpc)")
-	readPolicy := flag.String("replication-read-policy", string(synchronization.SyncPolicyLocal), "read sync policy (local, asynchronous, synchronous, quorum)")
-	writePolicy := flag.String("replication-write-policy", string(synchronization.SyncPolicyLocal), "write sync policy (local, asynchronous, synchronous, quorum)")
+	strategy := flag.String("replication-strategy", string(replication.SyncStrategyStandalone), "replication strategy (standalone, raft)")
+	backend := flag.String("replication-backend", string(replication.ReplicationBackendNoop), "replication backend (noop, maelstrom, grpc)")
+	readPolicy := flag.String("replication-read-policy", string(replication.SyncPolicyLocal), "read sync policy (local, asynchronous, synchronous, quorum)")
+	writePolicy := flag.String("replication-write-policy", string(replication.SyncPolicyLocal), "write sync policy (local, asynchronous, synchronous, quorum)")
 	minAcks := flag.Int("replication-min-write-acks", 1, "minimum acknowledgements for quorum policy")
 	flag.Parse()
 
-	config := synchronization.ReplicationConfig{
-		Backend:      synchronization.ReplicationBackend(*backend),
-		Strategy:     synchronization.SyncStrategy(*strategy),
-		ReadPolicy:   synchronization.SyncPolicy(*readPolicy),
-		WritePolicy:  synchronization.SyncPolicy(*writePolicy),
+	config := replication.ReplicationConfig{
+		Backend:      replication.ReplicationBackend(*backend),
+		Strategy:     replication.SyncStrategy(*strategy),
+		ReadPolicy:   replication.SyncPolicy(*readPolicy),
+		WritePolicy:  replication.SyncPolicy(*writePolicy),
 		MinWriteAcks: *minAcks,
 	}
 

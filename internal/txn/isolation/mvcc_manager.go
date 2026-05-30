@@ -386,12 +386,19 @@ func (m *MVCCManager) Delete(txnID txn.TransactionID, tableName, indexName strin
 	}
 
 	internalKey := m.encodeKey(key, uint64(txnID))
-	payload := []byte{OpDelete}
 
 	var beforeImage []byte
 	if v, err := m.Read(txnID, tableName, indexName, key); err == nil {
 		beforeImage = v
 	}
+	if beforeImage == nil {
+		return fmt.Errorf("cannot delete key '%s': not found", string(key))
+	}
+	// tableManager.Write() calls ExtractIndexValues on the payload and requires
+	// a schema-valid byte sequence. Prepending OpDelete to the old row bytes
+	// satisfies the schema parser while keeping entry.Value[0] == OpDelete so
+	// the MVCC cursor still recognises this version as a tombstone.
+	payload := append([]byte{OpDelete}, beforeImage...)
 
 	if m.logManager != nil {
 		rec := log.WALRecord{TxnID: meta.txn.GetID(), Type: log.UPDATE, Before: beforeImage, After: payload}

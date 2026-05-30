@@ -214,12 +214,17 @@ func TestMVCC_HighConcurrency_LostUpdate(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < incrementsPerWorker; j++ {
-				tid := mvcc.BeginTransaction(txn_unit.SERIALIZABLE)
-				res, _ := mvcc.Read(txn.TransactionID(tid), "test_table", "PRIMARY", key)
-
-				currentVal := getValFromTable(tm, res)
-				mvcc.Write(txn.TransactionID(tid), "test_table", "PRIMARY", key, buildTestRow(1, currentVal+1))
-				mvcc.Commit(txn.TransactionID(tid)) // can abort
+				for {
+					tid := mvcc.BeginTransaction(txn_unit.SERIALIZABLE)
+					res, _ := mvcc.Read(txn.TransactionID(tid), "test_table", "PRIMARY", key)
+					currentVal := getValFromTable(tm, res)
+					mvcc.Write(txn.TransactionID(tid), "test_table", "PRIMARY", key, buildTestRow(1, currentVal+1))
+					if err := mvcc.Commit(txn.TransactionID(tid)); err == nil {
+						break
+					}
+					// Commit aborted the transaction due to a write-write conflict.
+					// Retry with a fresh read of the current value.
+				}
 			}
 		}()
 	}

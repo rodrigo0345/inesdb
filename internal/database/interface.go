@@ -3,41 +3,38 @@ package database
 import (
 	"github.com/rodrigo0345/omag/internal/storage"
 	"github.com/rodrigo0345/omag/internal/storage/schema"
+	"github.com/rodrigo0345/omag/pkg/pkglog"
 )
 
-type txnid = uint64
-type Iterator interface {
-	Next() bool
-	Entry() storage.ScanEntry
-	Error() error
-	Close() error
+// Options configures the database engine.
+type Options struct {
+	DBPath         string
+	LSMDataDir     string
+	WALPath        string
+	BufferPoolSize int
 }
 
-// Database describes the small, opinionated entry point for the preferred
-// MVCC + LSM-tree configuration.
+// Database is the primary interface for all database operations.
 type Database interface {
 	Close() error
 
-	// transaction management
-	BeginTransaction(isolationLevel uint8) txnid
-	Commit(txnID txnid) error
-	Abort(txnID txnid) error
+	// Transaction lifecycle
+	BeginTransaction(isolationLevel uint8) int64
+	Commit(txnID int64) error
+	Abort(txnID int64) error
 
-	Read(txnID txnid, tableName string, key []byte) ([]byte, error)
-	Scan(txnID txnid, tableName string, options storage.ScanOptions) (Iterator, error)
-	Write(txnID txnid, tableName string, key []byte, value []byte) error
-	Delete(txnID txnid, tableName string, key []byte) error
+	// DML — always targets the PRIMARY index.
+	Read(txnID int64, tableName string, key []byte) ([]byte, error)
+	Scan(txnID int64, tableName string, opts storage.ScanOptions) (storage.ICursor, error)
+	Write(txnID int64, tableName string, key []byte, value []byte) error
+	Delete(txnID int64, tableName string, key []byte) error
 
-	// tables
-	CreateTable(tableSchema *schema.TableSchema) error
+	// DDL
+	CreateTable(ts *schema.TableSchema) error
 	DropTable(tableName string) error
-	GetTableSchema(tableName string) (*schema.TableSchema, error)
+	GetTableSchema(tableName string) (schema.ITableSchema, error)
+	ListTables() []string
 
-	// indexes
-	CreateIndex(tableName string, indexName string, indexType schema.IndexType, columns []string) error
-	DropIndex(tableName string, indexName string) error
-
-	// exclusively distributed operations
-	Partition(tableName string, partitionKey string) error
-	Replicate(tableName string, targetNodeID string) error
+	// Observability — always returns a non-nil collector.
+	GetTelemetry() *pkglog.TelemetryCollector
 }
