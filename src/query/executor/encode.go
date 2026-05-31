@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math"
 	"strconv"
@@ -111,7 +110,7 @@ func encodeValue(dt schema.DataType, v any) ([]byte, error) {
 			return nil, err
 		}
 		buf := make([]byte, 4)
-		binary.BigEndian.PutUint32(buf, uint32(int32(n)))
+		schema.DbEndian.PutUint32(buf, uint32(int32(n)))
 		return buf, nil
 	case schema.TypeInt64:
 		n, err := toInt64(v)
@@ -119,7 +118,7 @@ func encodeValue(dt schema.DataType, v any) ([]byte, error) {
 			return nil, err
 		}
 		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, uint64(n))
+		schema.DbEndian.PutUint64(buf, uint64(n))
 		return buf, nil
 	case schema.TypeFloat64:
 		f, err := toFloat64(v)
@@ -127,12 +126,12 @@ func encodeValue(dt schema.DataType, v any) ([]byte, error) {
 			return nil, err
 		}
 		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, math.Float64bits(f))
+		schema.DbEndian.PutUint64(buf, math.Float64bits(f))
 		return buf, nil
 	case schema.TypeString:
 		s := fmt.Sprintf("%v", v)
 		buf := make([]byte, 4+len(s))
-		binary.BigEndian.PutUint32(buf[:4], uint32(len(s)))
+		schema.DbEndian.PutUint32(buf[:4], uint32(len(s)))
 		copy(buf[4:], s)
 		return buf, nil
 	default:

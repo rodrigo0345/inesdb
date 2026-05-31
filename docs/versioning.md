@@ -105,7 +105,7 @@ When integrating InesDB, always reference the specific version's documentation:
 git checkout v0.1.0
 
 # Import Go package (version independent)
-import "github.com/rodrigo0345/omag/internal/storage/btree"
+import "github.com/rodrigo0345/omag/src/storage/btree"
 
 # Refer to documentation for that version
 # https://rodrigo0345.github.io/inesdb/0.1.0/

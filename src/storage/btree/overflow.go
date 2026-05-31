@@ -1,12 +1,11 @@
 package btree
 
 import (
-	"encoding/binary"
 	"fmt"
 
 	"github.com/rodrigo0345/omag/src/storage/page"
+	"github.com/rodrigo0345/omag/src/storage/schema"
 )
-
 
 const (
 	OverflowThreshold = 100
@@ -27,11 +26,11 @@ func NewOverflowPage(size int) *OverflowPage {
 }
 
 func (op *OverflowPage) SetNextOverflowID(nextID uint64) {
-	binary.LittleEndian.PutUint64(op.data[0:8], nextID)
+	schema.DbEndian.PutUint64(op.data[0:8], nextID)
 }
 
 func (op *OverflowPage) GetNextOverflowID() uint64 {
-	return binary.LittleEndian.Uint64(op.data[0:8])
+	return schema.DbEndian.Uint64(op.data[0:8])
 }
 
 func (op *OverflowPage) WriteData(offset int, data []byte) int {
@@ -73,7 +72,6 @@ func (op *OverflowPage) ReadData(offset int, length int) []byte {
 func (op *OverflowPage) GetData() []byte {
 	return op.data
 }
-
 
 func (b *BPlusTreeBackend) writeValueWithOverflow(value []byte) (int, uint64, error) {
 	if len(value) <= OverflowThreshold {
@@ -165,7 +163,6 @@ func (b *BPlusTreeBackend) deleteValueWithOverflow(firstOverflowPageID uint64) e
 
 	return nil
 }
-
 
 func (b *BPlusTreeBackend) shouldMergePage(page page.IResourcePage) bool {
 	pageType := getPageType(page, 0, 2)
@@ -278,7 +275,6 @@ func (b *BPlusTreeBackend) mergeLeafPages(
 
 	currentLeaf.SetRightSibling(rightLeaf.RightSibling())
 	leafPage.SetDirty(true)
-
 
 	return true, nil
 }

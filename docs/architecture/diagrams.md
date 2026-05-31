@@ -76,13 +76,13 @@ go install github.com/jfeliu007/goplantuml/cmd/goplantuml@latest
 
 # Generate all diagrams
 mkdir -p docs/diagrams
-goplantuml -d ./internal/txn > docs/diagrams/txn_classes.puml
-goplantuml -d ./internal/isolation > docs/diagrams/isolation_classes.puml
-goplantuml -d ./internal/storage > docs/diagrams/storage_classes.puml
-goplantuml -d ./internal/storage/btree > docs/diagrams/btree_classes.puml
-goplantuml -d ./internal/storage/lsm > docs/diagrams/lsm_classes.puml
-goplantuml -d ./internal/concurrency > docs/diagrams/concurrency_classes.puml
-goplantuml -d ./internal > docs/diagrams/full_architecture.puml
+goplantuml -d ./src/engine > docs/diagrams/txn_classes.puml
+goplantuml -d ./src/engine/mvcc > docs/diagrams/isolation_classes.puml
+goplantuml -d ./src/storage > docs/diagrams/storage_classes.puml
+goplantuml -d ./src/storage/btree > docs/diagrams/btree_classes.puml
+goplantuml -d ./src/storage/lsm > docs/diagrams/lsm_classes.puml
+goplantuml -d ./src/storage/replacer > docs/diagrams/concurrency_classes.puml
+goplantuml -d ./src > docs/diagrams/full_architecture.puml
 ```
 
 Or simply run:

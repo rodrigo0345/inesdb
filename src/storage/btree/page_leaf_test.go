@@ -1,9 +1,10 @@
 package btree
 
 import (
-	"encoding/binary"
 	"fmt"
 	"testing"
+
+	"github.com/rodrigo0345/omag/src/storage/schema"
 )
 
 func TestLeafPage_Initialization(t *testing.T) {
@@ -50,12 +51,11 @@ func TestLeafPage_SlotArrayMath(t *testing.T) {
 	pageSize := uint32(4096)
 	leaf := NewLeafPage(pageSize)
 
-
 	cell0Offset := uint16(4000)
 
 	slot0Position := LeafHeaderSize + (0 * SlotSize)
 
-	binary.LittleEndian.PutUint16(leaf.data[slot0Position:], cell0Offset)
+	schema.DbEndian.PutUint16(leaf.data[slot0Position:], cell0Offset)
 
 	retrievedOffset := leaf.GetCellOffset(0)
 
@@ -105,7 +105,7 @@ func TestLeafPage_ManualInsertSimulation(t *testing.T) {
 
 	cellIndex := leaf.CellCount()
 	slotPosition := LeafHeaderSize + (cellIndex * SlotSize)
-	binary.LittleEndian.PutUint16(leaf.data[slotPosition:], newFreeSpace)
+	schema.DbEndian.PutUint16(leaf.data[slotPosition:], newFreeSpace)
 
 	leaf.SetCellCount(cellIndex + 1)
 	if leaf.CellCount() != 1 {

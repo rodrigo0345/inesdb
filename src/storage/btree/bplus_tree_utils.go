@@ -2,10 +2,10 @@ package btree
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 
 	"github.com/rodrigo0345/omag/src/storage/page"
+	"github.com/rodrigo0345/omag/src/storage/schema"
 )
 
 func (b *BPlusTreeBackend) findLeafPage(pageID uint64, key []byte) ([]uint64, error) {
@@ -83,8 +83,6 @@ func (b *BPlusTreeBackend) splitLeaf(
 		}
 	}
 
-
-
 	copy(leafPage.GetData(), leaf.data)
 	leafPage.SetDirty(true)
 	leafPage.WUnlock()
@@ -123,7 +121,6 @@ func (tree *BPlusTreeBackend) promoteKey(breadcrumbs []uint64, key []byte, child
 		tree.bufferManager.UnpinPage(page.ResourcePageID(parentID), false)
 		return err
 	}
-
 
 	parentPage.SetDirty(true)
 	parentPage.WUnlock()
@@ -178,8 +175,6 @@ func (tree *BPlusTreeBackend) splitInternal(
 		}
 	}
 
-
-
 	copy(parentPage.GetData(), parent.data)
 	parentPage.SetDirty(true)
 	parentPage.WUnlock()
@@ -208,7 +203,6 @@ func (tree *BPlusTreeBackend) createNewRoot(oldRootID uint64, key []byte, rightC
 		tree.bufferManager.UnpinPage(page.ResourcePageID(newRootID), false)
 		return fmt.Errorf("insert into new root: %w", err)
 	}
-
 
 	newRootPage.WLock()
 	copy(newRootPage.GetData(), newRoot.data)
@@ -244,7 +238,7 @@ func getPageType(
 	defer pageObj.RUnlock()
 
 	data := pageObj.GetData()
-	return LogicPageType(binary.LittleEndian.Uint16(data[typeStartIndex:typeEndIndex]))
+	return LogicPageType(schema.DbEndian.Uint16(data[typeStartIndex:typeEndIndex]))
 }
 
 func nextInternalPage(internalPage page.IResourcePage, key []byte) uint64 {

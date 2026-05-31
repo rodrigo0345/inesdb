@@ -2,9 +2,10 @@ package btree
 
 import (
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"sort"
+
+	"github.com/rodrigo0345/omag/src/storage/schema"
 )
 
 const (
@@ -64,7 +65,7 @@ func (node *LeafLogicPage) Insert(key []byte, value []byte) error {
 	}
 
 	newSlotPos := LeafHeaderSize + (insertIndex * SlotSize)
-	binary.LittleEndian.PutUint16(node.data[newSlotPos:], newFreeSpace)
+	schema.DbEndian.PutUint16(node.data[newSlotPos:], newFreeSpace)
 
 	node.SetCellCount(node.CellCount() + 1)
 
@@ -100,7 +101,6 @@ func (node *LeafLogicPage) Remove(key []byte) error {
 		return ErrKeyNotFound
 	}
 
-
 	slotPos := LeafHeaderSize + (index * SlotSize)
 	endPos := LeafHeaderSize + (cellCount * SlotSize)
 
@@ -131,7 +131,7 @@ func (node *LeafLogicPage) Vacuum() {
 		tmp.WriteCell(newFreeSpace, cell.Key, cell.Value)
 
 		newSlotPos := LeafHeaderSize + (i * SlotSize)
-		binary.LittleEndian.PutUint16(tmp.data[newSlotPos:], newFreeSpace)
+		schema.DbEndian.PutUint16(tmp.data[newSlotPos:], newFreeSpace)
 	}
 
 	copy(node.data, tmp.data)
@@ -172,7 +172,7 @@ func (node *LeafLogicPage) Split(newPage *LeafLogicPage, newPageID uint64) []byt
 		tmp.WriteCell(newFreeSpace, cell.Key, cell.Value)
 
 		newSlotPos := LeafHeaderSize + (i * SlotSize)
-		binary.LittleEndian.PutUint16(tmp.data[newSlotPos:], newFreeSpace)
+		schema.DbEndian.PutUint16(tmp.data[newSlotPos:], newFreeSpace)
 	}
 
 	copy(node.data, tmp.data)
@@ -196,47 +196,47 @@ func NewLeafPage(pageSize uint32) *LeafLogicPage {
 
 func (node *LeafLogicPage) GetCellOffset(cellIndex uint16) uint16 {
 	slotOffset := LeafHeaderSize + (cellIndex * SlotSize)
-	return binary.LittleEndian.Uint16(node.data[slotOffset:])
+	return schema.DbEndian.Uint16(node.data[slotOffset:])
 }
 
 func (node *LeafLogicPage) PageType() LogicPageType {
-	return LogicPageType(binary.LittleEndian.Uint16(node.data[LeafHeaderTypeOffset:]))
+	return LogicPageType(schema.DbEndian.Uint16(node.data[LeafHeaderTypeOffset:]))
 }
 
 func (node *LeafLogicPage) CellCount() uint16 {
-	return binary.LittleEndian.Uint16(node.data[LeafHeaderCellsOffset:])
+	return schema.DbEndian.Uint16(node.data[LeafHeaderCellsOffset:])
 }
 
 func (node *LeafLogicPage) FreeSpacePointer() uint16 {
-	return binary.LittleEndian.Uint16(node.data[LeafHeaderFreeSpaceOffset:])
+	return schema.DbEndian.Uint16(node.data[LeafHeaderFreeSpaceOffset:])
 }
 
 func (node *LeafLogicPage) RightSibling() uint64 {
-	return binary.LittleEndian.Uint64(node.data[LeafHeaderSiblingOffset:])
+	return schema.DbEndian.Uint64(node.data[LeafHeaderSiblingOffset:])
 }
 
 func (node *LeafLogicPage) SetPageType(pageType LogicPageType) {
-	binary.LittleEndian.PutUint16(node.data[LeafHeaderTypeOffset:], uint16(pageType))
+	schema.DbEndian.PutUint16(node.data[LeafHeaderTypeOffset:], uint16(pageType))
 }
 
 func (node *LeafLogicPage) SetCellCount(count uint16) {
-	binary.LittleEndian.PutUint16(node.data[LeafHeaderCellsOffset:], count)
+	schema.DbEndian.PutUint16(node.data[LeafHeaderCellsOffset:], count)
 }
 
 func (node *LeafLogicPage) SetFreeSpacePointer(pointer uint16) {
-	binary.LittleEndian.PutUint16(node.data[LeafHeaderFreeSpaceOffset:], pointer)
+	schema.DbEndian.PutUint16(node.data[LeafHeaderFreeSpaceOffset:], pointer)
 }
 
 func (node *LeafLogicPage) SetRightSibling(siblingID uint64) {
-	binary.LittleEndian.PutUint64(node.data[LeafHeaderSiblingOffset:], siblingID)
+	schema.DbEndian.PutUint64(node.data[LeafHeaderSiblingOffset:], siblingID)
 }
 
 func (node *LeafLogicPage) GetCell(offset uint16) Cell {
 	offset32 := uint32(offset)
 
-	keyLen := uint32(binary.LittleEndian.Uint16(node.data[offset32 : offset32+2]))
-	valLen := binary.LittleEndian.Uint32(node.data[offset32+2 : offset32+6])
-	overflowID := binary.LittleEndian.Uint64(node.data[offset32+6 : offset32+14])
+	keyLen := uint32(schema.DbEndian.Uint16(node.data[offset32 : offset32+2]))
+	valLen := schema.DbEndian.Uint32(node.data[offset32+2 : offset32+6])
+	overflowID := schema.DbEndian.Uint64(node.data[offset32+6 : offset32+14])
 
 	keyStart := offset32 + CellHeaderSize
 	valStart := keyStart + keyLen
@@ -257,9 +257,9 @@ func (node *LeafLogicPage) WriteCellWithOverflow(offset uint16, key []byte, valu
 	keyLen := uint32(len(key))
 	valLen := uint32(len(value))
 
-	binary.LittleEndian.PutUint16(node.data[offset32:offset32+2], uint16(keyLen))
-	binary.LittleEndian.PutUint32(node.data[offset32+2:offset32+6], valLen)
-	binary.LittleEndian.PutUint64(node.data[offset32+6:offset32+14], overflowID)
+	schema.DbEndian.PutUint16(node.data[offset32:offset32+2], uint16(keyLen))
+	schema.DbEndian.PutUint32(node.data[offset32+2:offset32+6], valLen)
+	schema.DbEndian.PutUint64(node.data[offset32+6:offset32+14], overflowID)
 
 	keyStart := offset32 + CellHeaderSize
 	copy(node.data[keyStart:], key)

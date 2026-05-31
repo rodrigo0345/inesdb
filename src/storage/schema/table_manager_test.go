@@ -110,7 +110,7 @@ func TestTableManager_DeleteConsistency(t *testing.T) {
 
 	pKey := []byte("p1")
 	row := buildRow(int32(1), int32(30), true, "Alice")
-	tm.Write(WriteOperation{"users", pKey, row})
+	tm.Write(WriteOperation{TableName: "users", Key: pKey, Value: row})
 
 	delOp := DeleteOperation{
 		TableName:   "users",
@@ -139,8 +139,8 @@ func TestTableManager_TwoHopScan(t *testing.T) {
 	tm, _, _ := setupTestManager()
 
 	// Insert data: Alice(30), Bob(20)
-	tm.Write(WriteOperation{"users", []byte("pk_a"), buildRow(int32(1), int32(30), true, "Alice")})
-	tm.Write(WriteOperation{"users", []byte("pk_b"), buildRow(int32(2), int32(20), true, "Bob")})
+	tm.Write(WriteOperation{TableName: "users", Key: []byte("pk_a"), Value: buildRow(int32(1), int32(30), true, "Alice")})
+	tm.Write(WriteOperation{TableName: "users", Key: []byte("pk_b"), Value: buildRow(int32(2), int32(20), true, "Bob")})
 
 	// Scan by Age (Secondary Index)
 	// Even though secondary storage only holds physical keys,
@@ -166,8 +166,8 @@ func TestTableManager_TwoHopScan(t *testing.T) {
 
 func TestTableManager_FullTableScan(t *testing.T) {
 	tm, _, _ := setupTestManager()
-	tm.Write(WriteOperation{"users", []byte("1"), buildRow(int32(1), int32(10), true, "A")})
-	tm.Write(WriteOperation{"users", []byte("2"), buildRow(int32(2), int32(20), true, "B")})
+	tm.Write(WriteOperation{TableName: "users", Key: []byte("1"), Value: buildRow(int32(1), int32(10), true, "A")})
+	tm.Write(WriteOperation{TableName: "users", Key: []byte("2"), Value: buildRow(int32(2), int32(20), true, "B")})
 
 	cursor, _ := tm.FullTableScan("users", storage.ScanOptions{})
 	count := 0
@@ -183,7 +183,7 @@ func TestTableManager_FullTableScan(t *testing.T) {
 func TestTableManager_ProjectionEdgeCases(t *testing.T) {
 	tm, _, _ := setupTestManager()
 	row := buildRow(int32(1), int32(30), true, "Alice")
-	tm.Write(WriteOperation{"users", []byte("pk1"), row})
+	tm.Write(WriteOperation{TableName: "users", Key: []byte("pk1"), Value: row})
 
 	// Project non-existent column
 	opts := storage.ScanOptions{
@@ -201,7 +201,7 @@ func TestTableManager_ScanOptionsStacking(t *testing.T) {
 
 	// Insert 5 rows
 	for i := int32(1); i <= 5; i++ {
-		tm.Write(WriteOperation{"users", buildInt32(i), buildRow(i, i*10, true, "Player")})
+		tm.Write(WriteOperation{TableName: "users", Key: buildInt32(i), Value: buildRow(i, i*10, true, "Player")})
 	}
 
 	// Options: Filter (Age > 15) -> Offset 1 -> Limit 1

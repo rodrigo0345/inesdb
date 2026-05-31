@@ -82,7 +82,7 @@ go test -cover ./...
 go test -run TestName ./path/to/package
 
 # Run benchmarks
-go test -bench=. ./internal/concurrency/
+go test -bench=. ./src/storage/replacer/
 ```
 
 ### Test Coverage Requirements

@@ -43,6 +43,10 @@ type WriteOperation struct {
 	TableName string
 	Key       []byte
 	Value     []byte
+	// RawValue, when non-nil, is used for index key extraction instead of Value.
+	// The MVCC layer stores [op_byte | schema_bytes] in Value but passes the raw
+	// schema_bytes here so ExtractIndexValues sees the correct column layout.
+	RawValue []byte
 }
 
 type DeleteOperation struct {

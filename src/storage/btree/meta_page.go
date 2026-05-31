@@ -1,8 +1,9 @@
 package btree
 
 import (
-	"encoding/binary"
 	"os"
+
+	"github.com/rodrigo0345/omag/src/storage/schema"
 )
 
 const (
@@ -43,41 +44,41 @@ func NewMetaPageWithSize(pageSize uint32) *MetaLogicPage {
 }
 
 func (m *MetaLogicPage) PageType() LogicPageType {
-	return LogicPageType(binary.LittleEndian.Uint16(m.data[MetaTypeOffset:]))
+	return LogicPageType(schema.DbEndian.Uint16(m.data[MetaTypeOffset:]))
 }
 
 func (m *MetaLogicPage) MagicNumber() uint32 {
-	return binary.LittleEndian.Uint32(m.data[MetaMagicOffset:])
+	return schema.DbEndian.Uint32(m.data[MetaMagicOffset:])
 }
 
 func (m *MetaLogicPage) Version() uint16 {
-	return binary.LittleEndian.Uint16(m.data[MetaVersionOffset:])
+	return schema.DbEndian.Uint16(m.data[MetaVersionOffset:])
 }
 
 func (m *MetaLogicPage) PageSize() uint32 {
-	return binary.LittleEndian.Uint32(m.data[MetaPageSizeOffset:])
+	return schema.DbEndian.Uint32(m.data[MetaPageSizeOffset:])
 }
 
 func (m *MetaLogicPage) RootPage() uint64 {
-	return binary.LittleEndian.Uint64(m.data[MetaRootPageOffset:])
+	return schema.DbEndian.Uint64(m.data[MetaRootPageOffset:])
 }
 
 func (m *MetaLogicPage) SetPageType(ptype LogicPageType) {
-	binary.LittleEndian.PutUint16(m.data[MetaTypeOffset:], uint16(ptype))
+	schema.DbEndian.PutUint16(m.data[MetaTypeOffset:], uint16(ptype))
 }
 
 func (m *MetaLogicPage) SetMagicNumber(magic uint32) {
-	binary.LittleEndian.PutUint32(m.data[MetaMagicOffset:], magic)
+	schema.DbEndian.PutUint32(m.data[MetaMagicOffset:], magic)
 }
 
 func (m *MetaLogicPage) SetVersion(version uint16) {
-	binary.LittleEndian.PutUint16(m.data[MetaVersionOffset:], version)
+	schema.DbEndian.PutUint16(m.data[MetaVersionOffset:], version)
 }
 
 func (m *MetaLogicPage) SetPageSize(size uint32) {
-	binary.LittleEndian.PutUint32(m.data[MetaPageSizeOffset:], size)
+	schema.DbEndian.PutUint32(m.data[MetaPageSizeOffset:], size)
 }
 
 func (m *MetaLogicPage) SetRootPage(rootID uint64) {
-	binary.LittleEndian.PutUint64(m.data[MetaRootPageOffset:], rootID)
+	schema.DbEndian.PutUint64(m.data[MetaRootPageOffset:], rootID)
 }

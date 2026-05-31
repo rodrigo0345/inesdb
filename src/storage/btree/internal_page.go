@@ -2,8 +2,9 @@ package btree
 
 import (
 	"bytes"
-	"encoding/binary"
 	"sort"
+
+	"github.com/rodrigo0345/omag/src/storage/schema"
 )
 
 const (
@@ -34,40 +35,40 @@ func NewInternalPage(pageSize uint32) *InternalLogicPage {
 }
 
 func (node *InternalLogicPage) PageType() LogicPageType {
-	return LogicPageType(binary.LittleEndian.Uint16(node.data[InternalHeaderTypeOffset:]))
+	return LogicPageType(schema.DbEndian.Uint16(node.data[InternalHeaderTypeOffset:]))
 }
 
 func (node *InternalLogicPage) CellCount() uint16 {
-	return binary.LittleEndian.Uint16(node.data[InternalHeaderCellsOffset:])
+	return schema.DbEndian.Uint16(node.data[InternalHeaderCellsOffset:])
 }
 
 func (node *InternalLogicPage) FreeSpacePointer() uint16 {
-	return binary.LittleEndian.Uint16(node.data[InternalHeaderFreeSpaceOffset:])
+	return schema.DbEndian.Uint16(node.data[InternalHeaderFreeSpaceOffset:])
 }
 
 func (node *InternalLogicPage) RightmostPointer() uint64 {
-	return binary.LittleEndian.Uint64(node.data[InternalHeaderRightmostOffset:])
+	return schema.DbEndian.Uint64(node.data[InternalHeaderRightmostOffset:])
 }
 
 func (node *InternalLogicPage) SetPageType(pageType LogicPageType) {
-	binary.LittleEndian.PutUint16(node.data[InternalHeaderTypeOffset:], uint16(pageType))
+	schema.DbEndian.PutUint16(node.data[InternalHeaderTypeOffset:], uint16(pageType))
 }
 
 func (node *InternalLogicPage) SetCellCount(count uint16) {
-	binary.LittleEndian.PutUint16(node.data[InternalHeaderCellsOffset:], count)
+	schema.DbEndian.PutUint16(node.data[InternalHeaderCellsOffset:], count)
 }
 
 func (node *InternalLogicPage) SetFreeSpacePointer(pointer uint16) {
-	binary.LittleEndian.PutUint16(node.data[InternalHeaderFreeSpaceOffset:], pointer)
+	schema.DbEndian.PutUint16(node.data[InternalHeaderFreeSpaceOffset:], pointer)
 }
 
 func (node *InternalLogicPage) SetRightmostPointer(pointer uint64) {
-	binary.LittleEndian.PutUint64(node.data[InternalHeaderRightmostOffset:], pointer)
+	schema.DbEndian.PutUint64(node.data[InternalHeaderRightmostOffset:], pointer)
 }
 
 func (node *InternalLogicPage) GetCellOffset(cellIndex uint16) uint16 {
 	slotOffset := InternalHeaderSize + (cellIndex * SlotSize)
-	return binary.LittleEndian.Uint16(node.data[slotOffset:])
+	return schema.DbEndian.Uint16(node.data[slotOffset:])
 }
 
 type InternalCell struct {
@@ -78,8 +79,8 @@ type InternalCell struct {
 func (node *InternalLogicPage) GetCell(offset uint16) InternalCell {
 	offset32 := uint32(offset)
 
-	childPtr := binary.LittleEndian.Uint64(node.data[offset32 : offset32+8])
-	keyLen := uint32(binary.LittleEndian.Uint16(node.data[offset32+8 : offset32+10]))
+	childPtr := schema.DbEndian.Uint64(node.data[offset32 : offset32+8])
+	keyLen := uint32(schema.DbEndian.Uint16(node.data[offset32+8 : offset32+10]))
 
 	keyStart := offset32 + InternalCellHeaderSize
 
@@ -93,8 +94,8 @@ func (node *InternalLogicPage) WriteCell(offset uint16, key []byte, childPointer
 	offset32 := uint32(offset)
 	keyLen := uint32(len(key))
 
-	binary.LittleEndian.PutUint64(node.data[offset32:offset32+8], childPointer)
-	binary.LittleEndian.PutUint16(node.data[offset32+8:offset32+10], uint16(keyLen))
+	schema.DbEndian.PutUint64(node.data[offset32:offset32+8], childPointer)
+	schema.DbEndian.PutUint16(node.data[offset32+8:offset32+10], uint16(keyLen))
 
 	keyStart := offset32 + InternalCellHeaderSize
 	copy(node.data[keyStart:], key)
@@ -139,7 +140,7 @@ func (node *InternalLogicPage) Insert(key []byte, childPointer uint64) error {
 	}
 
 	newSlotPos := InternalHeaderSize + (insertIndex * SlotSize)
-	binary.LittleEndian.PutUint16(node.data[newSlotPos:], newFreeSpace)
+	schema.DbEndian.PutUint16(node.data[newSlotPos:], newFreeSpace)
 
 	node.SetCellCount(node.CellCount() + 1)
 
@@ -182,7 +183,7 @@ func (node *InternalLogicPage) Vacuum() {
 		tmp.WriteCell(newFreeSpace, cell.Key, cell.ChildPointer)
 
 		newSlotPos := InternalHeaderSize + (i * SlotSize)
-		binary.LittleEndian.PutUint16(tmp.data[newSlotPos:], newFreeSpace)
+		schema.DbEndian.PutUint16(tmp.data[newSlotPos:], newFreeSpace)
 	}
 
 	copy(node.data, tmp.data)
@@ -221,7 +222,7 @@ func (node *InternalLogicPage) Split(newPage *InternalLogicPage) []byte {
 		tmp.WriteCell(newFreeSpace, cell.Key, cell.ChildPointer)
 
 		newSlotPos := InternalHeaderSize + (i * SlotSize)
-		binary.LittleEndian.PutUint16(tmp.data[newSlotPos:], newFreeSpace)
+		schema.DbEndian.PutUint16(tmp.data[newSlotPos:], newFreeSpace)
 	}
 
 	copy(node.data, tmp.data)

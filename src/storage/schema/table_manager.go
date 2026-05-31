@@ -1,7 +1,6 @@
 package schema
 
 import (
-	"encoding/binary"
 	"fmt"
 	"sync"
 
@@ -134,8 +133,14 @@ func (tm *TableManager) Write(op WriteOperation) error {
 		return fmt.Errorf("table %s does not exist", tableName)
 	}
 
-	// 1. Extract values for all defined indexes from the row payload
-	indexKeys, err := tableSchema.ExtractIndexValues(op.Value)
+	// 1. Extract values for all defined indexes from the row payload.
+	// When RawValue is set (e.g. from the MVCC layer which prefixes Value with
+	// an op byte), use it for index key extraction instead of Value.
+	extractFrom := op.Value
+	if op.RawValue != nil {
+		extractFrom = op.RawValue
+	}
+	indexKeys, err := tableSchema.ExtractIndexValues(extractFrom)
 	if err != nil {
 		return fmt.Errorf("failed to extract index values for table %s: %w", tableName, err)
 	}
@@ -324,7 +329,7 @@ func extractProjectedColumns(schemaCols []Column, value []byte, projection []str
 			if offset+4 > payloadLen {
 				return nil, fmt.Errorf("unexpected EOF reading string header")
 			}
-			strLen := int(binary.BigEndian.Uint32(value[offset : offset+4]))
+			strLen := int(DbEndian.Uint32(value[offset : offset+4]))
 			offset += 4 + strLen
 		}
 

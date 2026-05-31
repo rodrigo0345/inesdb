@@ -44,11 +44,11 @@ jobs:
     - name: Generate Go Documentation
       run: |
         mkdir -p docs/api
-        go doc ./internal/storage/btree > docs/api/btree.md || true
-        go doc ./internal/storage/buffer > docs/api/buffer-pool.md || true
-        go doc ./internal/storage/lsm > docs/api/lsm-tree.md || true
-        go doc ./internal/txn > docs/api/transactions.md || true
-        go doc ./internal/concurrency > docs/api/concurrency.md || true
+        go doc ./src/storage/btree > docs/api/btree.md || true
+        go doc ./src/storage/buffer > docs/api/buffer-pool.md || true
+        go doc ./src/storage/lsm > docs/api/lsm-tree.md || true
+        go doc ./src/engine > docs/api/transactions.md || true
+        go doc ./src/storage/replacer > docs/api/concurrency.md || true
 
     - name: Install GoPlantUML
       run: go install github.com/jfeliu007/goplantuml/cmd/goplantuml@latest
@@ -58,14 +58,14 @@ jobs:
         mkdir -p docs/diagrams
         
         echo "Generating class diagrams..."
-        goplantuml -output docs/diagrams/txn_classes.puml ./internal/txn || true
-        goplantuml -output docs/diagrams/isolation_classes.puml ./internal/isolation || true
-        goplantuml -output docs/diagrams/storage_classes.puml ./internal/storage || true
-        goplantuml -output docs/diagrams/btree_classes.puml ./internal/storage/btree || true
-        goplantuml -output docs/diagrams/lsm_classes.puml ./internal/storage/lsm || true
-        goplantuml -output docs/diagrams/buffer_classes.puml ./internal/storage/buffer || true
-        goplantuml -output docs/diagrams/concurrency_classes.puml ./internal/concurrency || true
-        goplantuml -output docs/diagrams/full_architecture.puml ./internal || true
+        goplantuml -output docs/diagrams/txn_classes.puml ./src/engine || true
+        goplantuml -output docs/diagrams/isolation_classes.puml ./src/engine/mvcc || true
+        goplantuml -output docs/diagrams/storage_classes.puml ./src/storage || true
+        goplantuml -output docs/diagrams/btree_classes.puml ./src/storage/btree || true
+        goplantuml -output docs/diagrams/lsm_classes.puml ./src/storage/lsm || true
+        goplantuml -output docs/diagrams/buffer_classes.puml ./src/storage/buffer || true
+        goplantuml -output docs/diagrams/concurrency_classes.puml ./src/storage/replacer || true
+        goplantuml -output docs/diagrams/full_architecture.puml ./src || true
         
         echo "Class diagrams generated successfully!"
         ls -la docs/diagrams/
@@ -94,17 +94,21 @@ jobs:
         ## Package Structure
 
         \`\`\`
-        internal/
+        src/
         ├── storage/         - Core storage engine implementations
         │   ├── btree/       - B+ Tree backend implementation
         │   ├── buffer/      - Buffer pool and disk management
-        │   └── lsm/         - Log-Structured Merge Tree backend
-        ├── txn/             - Transaction and ACID support
-        │   ├── isolation/   - Isolation level managers (MVCC, OCC, 2PL)
-        │   ├── lock/        - Lock manager and deadlock detection
-        │   ├── log/         - Write-Ahead Logging (WAL)
-        │   └── undo/        - Undo/rollback operations
-        └── concurrency/     - Concurrency control and cache replacement
+        │   ├── lsm/         - Log-Structured Merge Tree backend
+        │   └── replacer/    - Concurrency control and cache replacement
+        ├── engine/          - Transaction and ACID support
+        │   ├── mvcc/        - MVCC isolation manager
+        │   ├── rollback/    - Rollback operations
+        │   ├── undo/        - Undo log management
+        │   └── wal/         - Write-Ahead Logging (WAL)
+        ├── query/           - Query execution and server
+        │   ├── executor/    - SQL executor
+        │   └── server/      - PostgreSQL wire protocol server
+        └── replication/     - Replication support
         \`\`\`
 
         EOF

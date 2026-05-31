@@ -75,12 +75,14 @@ type WALManager struct {
 	lastCheckpointDPT DirtyPageTable
 	lastCheckpointATT ActiveTransactionTable
 
-	activeTxns    map[uint64]bool
-	txnLastLSN    map[uint64]uint64
-	pageVersions  map[page.ResourcePageID]uint64
-	txnOperations map[uint64][]RecoveryOperation // Track operations per transaction
+	activeTxns     map[uint64]bool
+	txnLastLSN     map[uint64]uint64
+	pageVersions   map[page.ResourcePageID]uint64
+	txnOperations  map[uint64][]RecoveryOperation // Track operations per transaction
 	lastFlushedLSN uint64
 }
+
+var DbEndian binary.ByteOrder = binary.LittleEndian
 
 func NewWALManager(filePath string) (ILogManager, error) {
 	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0o666)
@@ -145,7 +147,7 @@ func (wm *WALManager) appendWALRecord(v *WALRecord) (LSN, error) {
 	case OPERATION:
 		if len(v.Before) >= 3 {
 			opType := RecordType(v.Before[0])
-			tableNameLen := int(binary.LittleEndian.Uint16(v.Before[1:3]))
+			tableNameLen := int(DbEndian.Uint16(v.Before[1:3]))
 			if len(v.Before) >= 3+tableNameLen {
 				tableName := string(v.Before[3 : 3+tableNameLen])
 				key := v.Before[3+tableNameLen:]
@@ -179,23 +181,23 @@ func (wm *WALManager) serializeWALRecord(rec WALRecord) []byte {
 	buf := make([]byte, 0, 256)
 
 	header := make([]byte, 39)
-	binary.LittleEndian.PutUint64(header[0:8], rec.LSN)
-	binary.LittleEndian.PutUint64(header[8:16], rec.PrevLSN)
-	binary.LittleEndian.PutUint64(header[16:24], rec.TxnID)
+	DbEndian.PutUint64(header[0:8], rec.LSN)
+	DbEndian.PutUint64(header[8:16], rec.PrevLSN)
+	DbEndian.PutUint64(header[16:24], rec.TxnID)
 	header[24] = byte(rec.Type)
-	binary.LittleEndian.PutUint32(header[25:29], uint32(rec.PageID))
-	binary.LittleEndian.PutUint16(header[29:31], rec.Offset)
-	binary.LittleEndian.PutUint64(header[31:39], rec.PageLSN)
+	DbEndian.PutUint32(header[25:29], uint32(rec.PageID))
+	DbEndian.PutUint16(header[29:31], rec.Offset)
+	DbEndian.PutUint64(header[31:39], rec.PageLSN)
 
 	buf = append(buf, header...)
 
 	beforeLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(beforeLen, uint32(len(rec.Before)))
+	DbEndian.PutUint32(beforeLen, uint32(len(rec.Before)))
 	buf = append(buf, beforeLen...)
 	buf = append(buf, rec.Before...)
 
 	afterLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(afterLen, uint32(len(rec.After)))
+	DbEndian.PutUint32(afterLen, uint32(len(rec.After)))
 	buf = append(buf, afterLen...)
 	buf = append(buf, rec.After...)
 
@@ -213,19 +215,19 @@ func (wm *WALManager) deserializeWALRecord(reader io.Reader) (*WALRecord, error)
 		return nil, fmt.Errorf("failed to read WAL record header: %w", err)
 	}
 
-	rec.LSN = binary.LittleEndian.Uint64(header[0:8])
-	rec.PrevLSN = binary.LittleEndian.Uint64(header[8:16])
-	rec.TxnID = binary.LittleEndian.Uint64(header[16:24])
+	rec.LSN = DbEndian.Uint64(header[0:8])
+	rec.PrevLSN = DbEndian.Uint64(header[8:16])
+	rec.TxnID = DbEndian.Uint64(header[16:24])
 	rec.Type = RecordType(header[24])
-	rec.PageID = page.ResourcePageID(binary.LittleEndian.Uint32(header[25:29]))
-	rec.Offset = binary.LittleEndian.Uint16(header[29:31])
-	rec.PageLSN = binary.LittleEndian.Uint64(header[31:39])
+	rec.PageID = page.ResourcePageID(DbEndian.Uint32(header[25:29]))
+	rec.Offset = DbEndian.Uint16(header[29:31])
+	rec.PageLSN = DbEndian.Uint64(header[31:39])
 
 	beforeLenBuf := make([]byte, 4)
 	if _, err := io.ReadFull(reader, beforeLenBuf); err != nil {
 		return nil, fmt.Errorf("failed to read before image length: %w", err)
 	}
-	beforeLen := binary.LittleEndian.Uint32(beforeLenBuf)
+	beforeLen := DbEndian.Uint32(beforeLenBuf)
 	if beforeLen > 0 {
 		rec.Before = make([]byte, beforeLen)
 		if _, err := io.ReadFull(reader, rec.Before); err != nil {
@@ -237,7 +239,7 @@ func (wm *WALManager) deserializeWALRecord(reader io.Reader) (*WALRecord, error)
 	if _, err := io.ReadFull(reader, afterLenBuf); err != nil {
 		return nil, fmt.Errorf("failed to read after image length: %w", err)
 	}
-	afterLen := binary.LittleEndian.Uint32(afterLenBuf)
+	afterLen := DbEndian.Uint32(afterLenBuf)
 	if afterLen > 0 {
 		rec.After = make([]byte, afterLen)
 		if _, err := io.ReadFull(reader, rec.After); err != nil {
@@ -358,7 +360,7 @@ func (wm *WALManager) analysisPhase(file *os.File, state *RecoveryState) error {
 			// Before = operation type byte + table name length + table name + key
 			if len(rec.Before) > 3 {
 				opType := RecordType(rec.Before[0])
-				tableNameLen := int(binary.LittleEndian.Uint16(rec.Before[1:3]))
+				tableNameLen := int(DbEndian.Uint16(rec.Before[1:3]))
 				if len(rec.Before) >= 3+tableNameLen {
 					tableName := string(rec.Before[3 : 3+tableNameLen])
 					key := rec.Before[3+tableNameLen:]
@@ -629,7 +631,7 @@ func appendOperationBefore(opType RecordType, tableName string, key []byte) []by
 	buf := make([]byte, 0, 3+len(tableNameBytes)+len(key))
 	buf = append(buf, byte(opType))
 	lenBytes := make([]byte, 2)
-	binary.LittleEndian.PutUint16(lenBytes, uint16(len(tableNameBytes)))
+	DbEndian.PutUint16(lenBytes, uint16(len(tableNameBytes)))
 	buf = append(buf, lenBytes...)
 	buf = append(buf, tableNameBytes...)
 	buf = append(buf, key...)

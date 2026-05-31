@@ -1,4 +1,4 @@
-package schema
+﻿package schema
 
 import (
 	"bytes"
@@ -74,7 +74,7 @@ func TestTableManager_DeleteCleanup(t *testing.T) {
 	physicalKey := []byte("p-key-v1")
 	payload := buildRow(int32(1), int32(25), "Alice")
 
-	tm.Write(WriteOperation{"users", physicalKey, payload})
+	tm.Write(WriteOperation{TableName: "users", Key: physicalKey, Value: payload})
 
 	delOp := DeleteOperation{
 		TableName:   "users",
@@ -104,8 +104,8 @@ func TestTableManager_TwoHopScanAndFiltering(t *testing.T) {
 	pKey2 := []byte("pk2")
 	row2 := buildRow(int32(2), int32(25), "Bob")
 
-	tm.Write(WriteOperation{"users", pKey1, row1})
-	tm.Write(WriteOperation{"users", pKey2, row2})
+	tm.Write(WriteOperation{TableName: "users", Key: pKey1, Value: row1})
+	tm.Write(WriteOperation{TableName: "users", Key: pKey2, Value: row2})
 
 	// Scan 'idx_age' for Age > 28
 	opts := storage.ScanOptions{
@@ -138,13 +138,13 @@ func TestTableManager_TwoHopScanAndFiltering(t *testing.T) {
 
 func buildInt32(v int32) []byte {
 	b := make([]byte, 4)
-	binary.BigEndian.PutUint32(b, uint32(v))
+	DbEndian.PutUint32(b, uint32(v))
 	return b
 }
 
 func buildString(s string) []byte {
 	b := make([]byte, 4+len(s))
-	binary.BigEndian.PutUint32(b[0:4], uint32(len(s)))
+	DbEndian.PutUint32(b[0:4], uint32(len(s)))
 	copy(b[4:], s)
 	return b
 }
@@ -157,13 +157,13 @@ func buildRow(values ...interface{}) []byte {
 	for _, v := range values {
 		switch t := v.(type) {
 		case int32:
-			binary.Write(buf, binary.BigEndian, t)
+			binary.Write(buf, DbEndian, t)
 		case int64:
-			binary.Write(buf, binary.BigEndian, t)
+			binary.Write(buf, DbEndian, t)
 		case bool:
-			binary.Write(buf, binary.BigEndian, t)
+			binary.Write(buf, DbEndian, t)
 		case string:
-			binary.Write(buf, binary.BigEndian, uint32(len(t)))
+			binary.Write(buf, DbEndian, uint32(len(t)))
 			buf.WriteString(t)
 		}
 	}
@@ -220,7 +220,7 @@ func TestTableManager_ScanPagination(t *testing.T) {
 	// Insert 10 players with scores 10, 20, ..., 100
 	for i := int32(1); i <= 10; i++ {
 		payload := buildRow(i, i*10, true, fmt.Sprintf("Player%d", i))
-		tm.Write(WriteOperation{"players", buildInt32(i), payload})
+		tm.Write(WriteOperation{TableName: "players", Key: buildInt32(i), Value: payload})
 	}
 
 	// Test: Offset 3, Limit 2 (Should get scores 40, 50)
@@ -255,19 +255,19 @@ func TestTableManager_ScanPagination(t *testing.T) {
 func TestTableManager_ComplexFilterLogic(t *testing.T) {
 	tm, _ := setupFullManager()
 
-	tm.Write(WriteOperation{"players", []byte("p1"), buildRow(int32(1), int32(90), true, "Alice")})
-	tm.Write(WriteOperation{"players", []byte("p2"), buildRow(int32(2), int32(95), false, "Bob")})
-	tm.Write(WriteOperation{"players", []byte("p3"), buildRow(int32(3), int32(50), true, "Charlie")})
+	tm.Write(WriteOperation{TableName: "players", Key: []byte("p1"), Value: buildRow(int32(1), int32(90), true, "Alice")})
+	tm.Write(WriteOperation{TableName: "players", Key: []byte("p2"), Value: buildRow(int32(2), int32(95), false, "Bob")})
+	tm.Write(WriteOperation{TableName: "players", Key: []byte("p3"), Value: buildRow(int32(3), int32(50), true, "Charlie")})
 
 	// Filter: Active == True AND Score > 60
 	opts := storage.ScanOptions{
 		ComplexFilter: storage.RowFilterFunction(func(row storage.ScanEntry) bool {
-			  // Use the DecodeRow method from the TableManager
-			  score := tm.DecodeRow("players", "score", row.Value).Int()
-			  active := tm.DecodeRow("players", "active", row.Value).Bool()
+			// Use the DecodeRow method from the TableManager
+			score := tm.DecodeRow("players", "score", row.Value).Int()
+			active := tm.DecodeRow("players", "active", row.Value).Bool()
 
-			  return active && score > 60
-		    }),
+			return active && score > 60
+		}),
 	}
 
 	cursor, _ := tm.Scan("players", "PRIMARY", opts)
@@ -288,7 +288,7 @@ func TestTableManager_ComplexFilterLogic(t *testing.T) {
 func TestTableManager_ProjectionAndKeyOnly(t *testing.T) {
 	tm, _ := setupFullManager()
 	payload := buildRow(int32(1), int32(100), true, "ProPlayer")
-	tm.Write(WriteOperation{"players", []byte("pk1"), payload})
+	tm.Write(WriteOperation{TableName: "players", Key: []byte("pk1"), Value: payload})
 
 	// 1. Test KeyOnly
 	optsKey := storage.ScanOptions{KeyOnly: true}
@@ -312,12 +312,12 @@ func TestTableManager_ProjectionAndKeyOnly(t *testing.T) {
 		t.Errorf("Projected payload length mismatch. Got %d, want 17", len(val))
 	}
 
-	score := int32(binary.BigEndian.Uint32(val[0:4]))
+	score := int32(DbEndian.Uint32(val[0:4]))
 	if score != 100 {
 		t.Errorf("Projected score mismatch: %d", score)
 	}
 
-	nameLen := binary.BigEndian.Uint32(val[4:8])
+	nameLen := DbEndian.Uint32(val[4:8])
 	name := string(val[8 : 8+nameLen])
 	if name != "ProPlayer" {
 		t.Errorf("Projected name mismatch: %s", name)
@@ -326,8 +326,8 @@ func TestTableManager_ProjectionAndKeyOnly(t *testing.T) {
 
 func TestTableManager_ReverseScan(t *testing.T) {
 	tm, _ := setupFullManager()
-	tm.Write(WriteOperation{"players", buildInt32(1), buildRow(int32(1), int32(10), true, "A")})
-	tm.Write(WriteOperation{"players", buildInt32(2), buildRow(int32(2), int32(20), true, "B")})
+	tm.Write(WriteOperation{TableName: "players", Key: buildInt32(1), Value: buildRow(int32(1), int32(10), true, "A")})
+	tm.Write(WriteOperation{TableName: "players", Key: buildInt32(2), Value: buildRow(int32(2), int32(20), true, "B")})
 
 	opts := storage.ScanOptions{Reverse: true}
 	cursor, _ := tm.Scan("players", "idx_score", opts)

@@ -359,6 +359,7 @@ func createTestDiskManager(t *testing.T) *DiskManager {
 	if err != nil {
 		t.Fatalf("failed to create disk manager: %v", err)
 	}
+	t.Cleanup(func() { dm.Close() })
 	return dm
 }
 

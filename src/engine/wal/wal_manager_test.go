@@ -579,6 +579,7 @@ func TestAppendLog_Serialization_Format(t *testing.T) {
 	defer os.Remove(walFile)
 
 	wm, _ := NewWALManager(walFile)
+	defer wm.Close()
 
 	rec := WALRecord{
 		TxnID:  42,

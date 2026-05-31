@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rodrigo0345/omag/pkg/pkglog"
+	"github.com/rodrigo0345/omag/src/engine/rollback"
+	txn "github.com/rodrigo0345/omag/src/engine/txn"
+	log "github.com/rodrigo0345/omag/src/engine/wal"
 	"github.com/rodrigo0345/omag/src/storage"
 	"github.com/rodrigo0345/omag/src/storage/buffer"
 	"github.com/rodrigo0345/omag/src/storage/lsm"
 	"github.com/rodrigo0345/omag/src/storage/schema"
-	txn "github.com/rodrigo0345/omag/src/engine/txn"
-	log "github.com/rodrigo0345/omag/src/engine/wal"
-	"github.com/rodrigo0345/omag/src/engine/rollback"
-	"github.com/rodrigo0345/omag/pkg/pkglog"
 )
 
 // --- Test Environment Setup ---
@@ -72,8 +72,8 @@ func setupMVCCWithRealTableManager(t *testing.T) (*MVCCManager, *schema.TableMan
 func buildTestRow(id, val int32) []byte {
 	buf := new(bytes.Buffer)
 	buf.WriteByte(0x01) // Metadata byte (_txn_op)
-	binary.Write(buf, binary.BigEndian, id)
-	binary.Write(buf, binary.BigEndian, val)
+	binary.Write(buf, schema.DbEndian, id)
+	binary.Write(buf, schema.DbEndian, val)
 	return buf.Bytes()
 }
 

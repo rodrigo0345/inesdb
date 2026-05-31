@@ -45,7 +45,10 @@ func startSession(t *testing.T, db dbengine.Database) (*pgproto3.Frontend, func(
 	fe := pgproto3.NewFrontend(pgproto3.NewChunkReader(clientConn), clientConn)
 
 	// Perform startup handshake.
-	if err := fe.Send(&pgproto3.StartupMessage{ProtocolVersion: pgproto3.ProtocolVersionNumber}); err != nil {
+	if err := fe.Send(&pgproto3.StartupMessage{
+		ProtocolVersion: pgproto3.ProtocolVersionNumber,
+		Parameters:      map[string]string{"user": "test"},
+	}); err != nil {
 		t.Fatalf("send startup: %v", err)
 	}
 	for {
@@ -68,6 +71,10 @@ func startSession(t *testing.T, db dbengine.Database) (*pgproto3.Frontend, func(
 
 // sendQuery sends a simple-query message and collects all response messages
 // until ReadyForQuery.
+//
+// pgproto3's Frontend reuses the same *DataRow struct across Receive calls, so
+// each DataRow is deep-copied before storing so callers can safely inspect
+// values from multiple rows.
 func sendQuery(t *testing.T, fe *pgproto3.Frontend, sql string) []pgproto3.BackendMessage {
 	t.Helper()
 	if err := fe.Send(&pgproto3.Query{String: sql}); err != nil {
@@ -79,7 +86,19 @@ func sendQuery(t *testing.T, fe *pgproto3.Frontend, sql string) []pgproto3.Backe
 		if err != nil {
 			t.Fatalf("receive for %q: %v", sql, err)
 		}
-		msgs = append(msgs, msg)
+		if dr, ok := msg.(*pgproto3.DataRow); ok {
+			copied := &pgproto3.DataRow{Values: make([][]byte, len(dr.Values))}
+			for i, v := range dr.Values {
+				if v != nil {
+					b := make([]byte, len(v))
+					copy(b, v)
+					copied.Values[i] = b
+				}
+			}
+			msgs = append(msgs, copied)
+		} else {
+			msgs = append(msgs, msg)
+		}
 		if _, ok := msg.(*pgproto3.ReadyForQuery); ok {
 			break
 		}

@@ -12,10 +12,11 @@ import (
 	"sync"
 	"sync/atomic"
 
+	applog "github.com/rodrigo0345/omag/pkg/pkglog"
+	log "github.com/rodrigo0345/omag/src/engine/wal"
 	"github.com/rodrigo0345/omag/src/storage"
 	"github.com/rodrigo0345/omag/src/storage/buffer"
-	log "github.com/rodrigo0345/omag/src/engine/wal"
-	applog "github.com/rodrigo0345/omag/pkg/pkglog"
+	"github.com/rodrigo0345/omag/src/storage/schema"
 )
 
 const SSTableMaxSize = 65536
@@ -620,13 +621,13 @@ func (l *LSMTreeBackend) persistSSTable(sstable *SSTable, id uint64, level int) 
 	buf := new(bytes.Buffer)
 
 	// Write SSTable ID (8 bytes)
-	if err := binary.Write(buf, binary.LittleEndian, id); err != nil {
+	if err := binary.Write(buf, schema.DbEndian, id); err != nil {
 		return fmt.Errorf("failed to write SSTable ID: %w", err)
 	}
 
 	// Write number of entries (8 bytes)
 	numEntries := uint64(len(sstable.data))
-	if err := binary.Write(buf, binary.LittleEndian, numEntries); err != nil {
+	if err := binary.Write(buf, schema.DbEndian, numEntries); err != nil {
 		return fmt.Errorf("failed to write entry count: %w", err)
 	}
 
@@ -639,7 +640,7 @@ func (l *LSMTreeBackend) persistSSTable(sstable *SSTable, id uint64, level int) 
 		row := sstable.sortedRows[i]
 		keyBytes := []byte(row.key)
 		// Write key length (4 bytes)
-		if err := binary.Write(buf, binary.LittleEndian, uint32(len(keyBytes))); err != nil {
+		if err := binary.Write(buf, schema.DbEndian, uint32(len(keyBytes))); err != nil {
 			return fmt.Errorf("failed to write key length: %w", err)
 		}
 		// Write key
@@ -647,7 +648,7 @@ func (l *LSMTreeBackend) persistSSTable(sstable *SSTable, id uint64, level int) 
 			return fmt.Errorf("failed to write key: %w", err)
 		}
 		// Write value length (4 bytes)
-		if err := binary.Write(buf, binary.LittleEndian, uint32(len(row.value))); err != nil {
+		if err := binary.Write(buf, schema.DbEndian, uint32(len(row.value))); err != nil {
 			return fmt.Errorf("failed to write value length: %w", err)
 		}
 		// Write value
@@ -658,7 +659,7 @@ func (l *LSMTreeBackend) persistSSTable(sstable *SSTable, id uint64, level int) 
 
 	// Write number of tombstones (8 bytes)
 	numTombstones := uint64(len(sstable.tombstones))
-	if err := binary.Write(buf, binary.LittleEndian, numTombstones); err != nil {
+	if err := binary.Write(buf, schema.DbEndian, numTombstones); err != nil {
 		return fmt.Errorf("failed to write tombstone count: %w", err)
 	}
 
@@ -666,7 +667,7 @@ func (l *LSMTreeBackend) persistSSTable(sstable *SSTable, id uint64, level int) 
 	for key := range sstable.tombstones {
 		keyBytes := []byte(key)
 		// Write key length (4 bytes)
-		if err := binary.Write(buf, binary.LittleEndian, uint32(len(keyBytes))); err != nil {
+		if err := binary.Write(buf, schema.DbEndian, uint32(len(keyBytes))); err != nil {
 			return fmt.Errorf("failed to write tombstone key length: %w", err)
 		}
 		// Write key
@@ -811,7 +812,7 @@ func (l *LSMTreeBackend) loadSSTable(dir string, id uint64, level int) error {
 		if offset+4 > len(fileData) {
 			return 0, fmt.Errorf("unexpected EOF while reading uint32")
 		}
-		v := binary.LittleEndian.Uint32(fileData[offset : offset+4])
+		v := schema.DbEndian.Uint32(fileData[offset : offset+4])
 		offset += 4
 		return v, nil
 	}
@@ -819,7 +820,7 @@ func (l *LSMTreeBackend) loadSSTable(dir string, id uint64, level int) error {
 		if offset+8 > len(fileData) {
 			return 0, fmt.Errorf("unexpected EOF while reading uint64")
 		}
-		v := binary.LittleEndian.Uint64(fileData[offset : offset+8])
+		v := schema.DbEndian.Uint64(fileData[offset : offset+8])
 		offset += 8
 		return v, nil
 	}

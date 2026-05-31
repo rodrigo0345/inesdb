@@ -2,13 +2,13 @@ package btree
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"sort"
 
 	"github.com/rodrigo0345/omag/src/storage"
 	"github.com/rodrigo0345/omag/src/storage/buffer"
 	"github.com/rodrigo0345/omag/src/storage/page"
+	"github.com/rodrigo0345/omag/src/storage/schema"
 )
 
 type BPlusTreeBackend struct {
@@ -248,7 +248,7 @@ func (b *BPlusTreeBackend) insertWithOverflow(leaf *LeafLogicPage, key []byte, i
 	}
 
 	newSlotPos := LeafHeaderSize + (insertIndex * SlotSize)
-	binary.LittleEndian.PutUint16(leaf.data[newSlotPos:], newFreeSpace)
+	schema.DbEndian.PutUint16(leaf.data[newSlotPos:], newFreeSpace)
 	leaf.SetCellCount(leaf.CellCount() + 1)
 
 	return nil

@@ -12,6 +12,8 @@ import (
 
 type DataType uint8
 
+var DbEndian binary.ByteOrder = binary.LittleEndian
+
 const TRANSACTIONAL_OP = "_txn_op"
 
 const (
@@ -44,28 +46,28 @@ var TypeDecoders = map[DataType]Decoder{
 		if offset+4 > len(row) {
 			return nil, 0, fmt.Errorf("EOF")
 		}
-		return int32(binary.BigEndian.Uint32(row[offset:])), 4, nil
+		return int32(DbEndian.Uint32(row[offset:])), 4, nil
 	},
 	TypeInt64: func(row []byte, offset int) (any, int, error) {
 		if offset+8 > len(row) {
 			return nil, 0, fmt.Errorf("EOF")
 		}
-		return int64(binary.BigEndian.Uint64(row[offset:])), 8, nil
+		return int64(DbEndian.Uint64(row[offset:])), 8, nil
 	},
 	TypeFloat64: func(row []byte, offset int) (any, int, error) {
 		if offset+8 > len(row) {
 			return nil, 0, fmt.Errorf("EOF")
 		}
-		bits := binary.BigEndian.Uint64(row[offset:])
+		bits := DbEndian.Uint64(row[offset:])
 		return math.Float64frombits(bits), 8, nil
 	},
 	TypeString: func(row []byte, offset int) (any, int, error) {
 		if offset+4 > len(row) {
 			return nil, 0, fmt.Errorf("truncated string header")
 		}
-		strLen := int(binary.BigEndian.Uint32(row[offset : offset+4]))
+		strLen := int(DbEndian.Uint32(row[offset : offset+4]))
 		if offset+4+strLen > len(row) {
-			return nil, 0, fmt.Errorf("truncated string data")
+			return nil, 0, fmt.Errorf("truncated string data, original data: %x", row[offset:offset+4])
 		}
 		return string(row[offset+4 : offset+4+strLen]), 4 + strLen, nil
 	},
@@ -233,7 +235,7 @@ func (ts *TableSchema) calculateSize(t DataType, row []byte, offset int) (int, e
 		if offset+4 > len(row) {
 			return 0, fmt.Errorf("truncated string header")
 		}
-		strLen := int(binary.BigEndian.Uint32(row[offset : offset+4]))
+		strLen := int(DbEndian.Uint32(row[offset : offset+4]))
 		return 4 + strLen, nil
 	default:
 		return 0, fmt.Errorf("unknown type size")

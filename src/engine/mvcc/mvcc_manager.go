@@ -1,19 +1,18 @@
 package mvcc
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
 
+	"github.com/rodrigo0345/omag/pkg/pkglog"
+	"github.com/rodrigo0345/omag/src/engine/rollback"
+	txn_unit "github.com/rodrigo0345/omag/src/engine/txn"
+	log "github.com/rodrigo0345/omag/src/engine/wal"
 	"github.com/rodrigo0345/omag/src/storage"
 	"github.com/rodrigo0345/omag/src/storage/buffer"
 	"github.com/rodrigo0345/omag/src/storage/schema"
-	log "github.com/rodrigo0345/omag/src/engine/wal"
-	"github.com/rodrigo0345/omag/src/engine/rollback"
-	txn_unit "github.com/rodrigo0345/omag/src/engine/txn"
-	"github.com/rodrigo0345/omag/pkg/pkglog"
 )
 
 const (
@@ -346,17 +345,24 @@ func (m *MVCCManager) Write(txnID txn_unit.TransactionID, tableName, indexName s
 		}
 	}
 
+	m.mu.Lock()
+	meta.writtenUserKeys[string(key)] = struct{}{}
+	m.mu.Unlock()
+
 	if err := m.tableManager.Write(schema.WriteOperation{
 		TableName: tableName,
 		Key:       internalKey,
 		Value:     payload,
+		RawValue:  value,
 	}); err != nil {
+		// Physical write failed: mark aborted so a subsequent Commit returns an
+		// error and the caller retries instead of silently succeeding with no data.
+		m.mu.Lock()
+		meta.status = statusAborted
+		m.updateMinActive()
+		m.mu.Unlock()
 		return fmt.Errorf("table manager write failed: %w", err)
 	}
-
-	m.mu.Lock()
-	meta.writtenUserKeys[string(key)] = struct{}{}
-	m.mu.Unlock()
 
 	meta.txn.RecordRecoveryOperation(tableName, log.PUT, internalKey, payload)
 	if m.logManager != nil {
@@ -410,6 +416,7 @@ func (m *MVCCManager) Delete(txnID txn_unit.TransactionID, tableName, indexName 
 		TableName: tableName,
 		Key:       internalKey,
 		Value:     payload,
+		RawValue:  beforeImage,
 	}); err != nil {
 		return fmt.Errorf("table manager delete write failed: %w", err)
 	}
@@ -682,7 +689,7 @@ func (m *MVCCManager) encodeKey(userKey []byte, txnID uint64) []byte {
 	copy(buf, userKey)
 	buf[len(userKey)] = 0x00 // separator
 	flipped := ^txnID        // bit-flip → descending order
-	binary.BigEndian.PutUint64(buf[len(userKey)+1:], flipped)
+	schema.DbEndian.PutUint64(buf[len(userKey)+1:], flipped)
 	return buf
 }
 
@@ -692,7 +699,7 @@ func (m *MVCCManager) decodeKey(fullKey []byte) ([]byte, uint64, bool) {
 	}
 
 	userKey := fullKey[:len(fullKey)-9] // remove separator + txn
-	inverted := binary.BigEndian.Uint64(fullKey[len(fullKey)-8:])
+	inverted := schema.DbEndian.Uint64(fullKey[len(fullKey)-8:])
 	txnID := ^inverted
 
 	return userKey, txnID, true
