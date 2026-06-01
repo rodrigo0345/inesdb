@@ -28,11 +28,23 @@ type ITableSchema interface {
 	GetColumnTypeDecoder(columnName string) (Decoder, error)
 	ExtractIndexValues(value []byte) (map[string][]byte, error)
 
+	// Column nullability
+	SetColumnNotNull(columnName string)
+
+	// Storage engine selection
+	GetStorageEngine() string
+	SetStorageEngine(engine string)
+
 	// Index Management
 	AddIndex(name string, columns []string, engine storage.IStorageEngine)
+	SetIndexUnique(name string)
 	GetIndex(name string) *Index
 	GetAllIndexes() []*Index
 	GetIndexesByColumn(columnName string) []*Index
+
+	// Foreign Key Management
+	AddForeignKey(fk ForeignKey)
+	GetForeignKeys() []ForeignKey
 
 	ToJSON() ([]byte, error)
 }

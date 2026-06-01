@@ -45,6 +45,10 @@ func (tm *TableManager) CreateTable(schema ITableSchema, errorOnExists bool) err
 		for _, idx := range schema.GetAllIndexes() {
 			tableSchema.AddIndex(idx.Name, idx.Columns, idx.Engine)
 		}
+		for _, fk := range schema.GetForeignKeys() {
+			tableSchema.AddForeignKey(fk)
+		}
+		tableSchema.SetStorageEngine(schema.GetStorageEngine())
 	}
 
 	tm.schemas[name] = tableSchema
@@ -310,11 +314,19 @@ func extractProjectedColumns(schemaCols []Column, value []byte, projection []str
 		projectMap[p] = true
 	}
 
-	offset := 0
+	// Skip _txn_op byte (index 0) + null flags (one per user column).
+	numUserCols := len(schemaCols) - 1
+	dataStart := 1 + numUserCols
+
+	if len(value) < dataStart {
+		return nil, fmt.Errorf("unexpected EOF: row too short for null flags")
+	}
+
+	offset := dataStart
 	payloadLen := len(value)
 	var projectedBuf []byte
 
-	for i := range schemaCols {
+	for i := 1; i < len(schemaCols); i++ { // skip _txn_op at index 0
 		col := &schemaCols[i]
 		start := offset
 

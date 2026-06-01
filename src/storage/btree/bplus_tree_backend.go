@@ -67,9 +67,24 @@ func (b *BPlusTreeBackend) SaveMetadataToDisk() error {
 }
 
 func (b *BPlusTreeBackend) initializeRoot() error {
+	// Page 0 is reserved for metadata (SaveMetadataToDisk writes there via disk manager).
+	// Allocate page 0 via the buffer pool so future NewPage() calls start at page 1+,
+	// ensuring RootPage != 0 and the "if rootID == 0" guard doesn't fire again.
+	metaRef, err := b.bufferManager.NewPage() // consumes page 0
+	if err != nil {
+		return fmt.Errorf("failed to allocate metadata page: %w", err)
+	}
+	metaPageID := (*metaRef).GetID()
+	copy((*metaRef).GetData(), b.meta.data) // keep meta data in buffer pool frame
+	(*metaRef).SetDirty(true)
+	if err := b.bufferManager.UnpinPage(metaPageID, true); err != nil {
+		return err
+	}
+
+	// Root leaf gets page 1+.
 	pageRef, err := b.bufferManager.NewPage()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to allocate root leaf: %w", err)
 	}
 
 	rootPage := *pageRef

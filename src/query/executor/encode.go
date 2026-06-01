@@ -9,24 +9,58 @@ import (
 	"github.com/rodrigo0345/omag/src/storage/schema"
 )
 
+// parseVectorLiteral parses a string like "[0.1, -0.5, 3.14]" into []float32.
+func parseVectorLiteral(s string) ([]float32, error) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "[")
+	s = strings.TrimSuffix(s, "]")
+	if s == "" {
+		return []float32{}, nil
+	}
+	parts := strings.Split(s, ",")
+	result := make([]float32, len(parts))
+	for i, p := range parts {
+		f, err := strconv.ParseFloat(strings.TrimSpace(p), 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid vector component %q: %w", p, err)
+		}
+		result[i] = float32(f)
+	}
+	return result, nil
+}
+
 // EncodeRow serialises a column→value map into the byte format the storage
-// engine expects: [0x01 _txn_op][col1_bytes][col2_bytes]...
-// It also returns the primary key bytes (the concatenated bytes of the PRIMARY
-// index columns).
+// engine expects:
+//   [0x01 _txn_op][null_flag_0..null_flag_{N-1}][col0_data..colN_data]
+//
+// null_flag_i == 1 means column i is NULL; the data bytes for that column are
+// still written as zeros to preserve fixed offsets.
+// It also returns the primary key bytes (concatenated bytes of PRIMARY index columns).
 func EncodeRow(ts schema.ITableSchema, values map[string]any) (rowBytes []byte, primaryKey []byte, err error) {
 	// _txn_op metadata byte always 0x01 (insert marker at schema level).
 	rowBytes = append(rowBytes, 0x01)
 
+	userCols := ts.GetColumns()
 	primaryCols := primaryKeyColumns(ts)
 	pkSet := make(map[string]struct{}, len(primaryCols))
 	for _, c := range primaryCols {
 		pkSet[c] = struct{}{}
 	}
 
-	for _, col := range ts.GetColumns() {
+	// Phase 1: write null flags (one byte per user column).
+	for _, col := range userCols {
+		v := values[col.Name]
+		if v == nil {
+			rowBytes = append(rowBytes, 0x01) // NULL
+		} else {
+			rowBytes = append(rowBytes, 0x00) // not NULL
+		}
+	}
+
+	// Phase 2: write column data (zero bytes for NULL columns).
+	for _, col := range userCols {
 		v, ok := values[col.Name]
-		if !ok {
-			// Default zero value
+		if !ok || v == nil {
 			v = zeroValue(col.Type)
 		}
 		encoded, encErr := encodeValue(col.Type, v)
@@ -43,6 +77,7 @@ func EncodeRow(ts schema.ITableSchema, values map[string]any) (rowBytes []byte, 
 
 // DecodeRow deserialises engine row bytes into a column→value map.
 // rowBytes is the value returned by the MVCC cursor (has _txn_op prefix).
+// NULL columns are represented as nil in the returned map.
 func DecodeRow(ts schema.ITableSchema, rowBytes []byte) (map[string]any, error) {
 	result := make(map[string]any)
 	for _, col := range ts.GetColumns() {
@@ -50,7 +85,11 @@ func DecodeRow(ts schema.ITableSchema, rowBytes []byte) (map[string]any, error) 
 		if v.Error() != nil {
 			return nil, fmt.Errorf("decode column %s: %w", col.Name, v.Error())
 		}
-		result[col.Name] = schemaValueToNative(col.Type, v)
+		if v.IsNull() {
+			result[col.Name] = nil
+		} else {
+			result[col.Name] = schemaValueToNative(col.Type, v)
+		}
 	}
 	return result, nil
 }
@@ -70,7 +109,13 @@ func MapSQLType(sqlType string) (schema.DataType, error) {
 		return schema.TypeBool, nil
 	case "TEXT", "VARCHAR", "CHAR", "CHARACTER VARYING", "STRING":
 		return schema.TypeString, nil
+	case "UUID":
+		return schema.TypeString, nil
 	default:
+		// VECTOR(n) type
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sqlType)), "VECTOR") {
+			return schema.TypeVector, nil
+		}
 		// unknown types default to string for flexibility
 		return schema.TypeString, nil
 	}
@@ -134,6 +179,26 @@ func encodeValue(dt schema.DataType, v any) ([]byte, error) {
 		schema.DbEndian.PutUint32(buf[:4], uint32(len(s)))
 		copy(buf[4:], s)
 		return buf, nil
+	case schema.TypeVector:
+		var vecs []float32
+		switch x := v.(type) {
+		case []float32:
+			vecs = x
+		case string:
+			parsed, err := parseVectorLiteral(x)
+			if err != nil {
+				return nil, fmt.Errorf("invalid vector literal: %w", err)
+			}
+			vecs = parsed
+		default:
+			return nil, fmt.Errorf("cannot convert %T to []float32", v)
+		}
+		buf := make([]byte, 4+len(vecs)*4)
+		schema.DbEndian.PutUint32(buf[:4], uint32(len(vecs)))
+		for i, f := range vecs {
+			schema.DbEndian.PutUint32(buf[4+i*4:], math.Float32bits(f))
+		}
+		return buf, nil
 	default:
 		return nil, fmt.Errorf("unsupported type %d", dt)
 	}
@@ -149,6 +214,8 @@ func zeroValue(dt schema.DataType) any {
 		return float64(0)
 	case schema.TypeString:
 		return ""
+	case schema.TypeVector:
+		return []float32{}
 	default:
 		return 0
 	}
@@ -164,6 +231,12 @@ func schemaValueToNative(dt schema.DataType, v schema.Value) any {
 		return v.Float()
 	case schema.TypeString:
 		return v.String()
+	case schema.TypeVector:
+		inner := v.Inner()
+		if vecs, ok := inner.([]float32); ok {
+			return vecs
+		}
+		return []float32{}
 	default:
 		return v.Int()
 	}

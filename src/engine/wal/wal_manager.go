@@ -644,3 +644,34 @@ func (wm *WALManager) CleanupTransactionOperations(txnID uint64) {
 	defer wm.mu.Unlock()
 	delete(wm.txnOperations, txnID)
 }
+
+// TruncateAndReset discards all WAL records and resets the log to empty.
+func (wm *WALManager) TruncateAndReset() error {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+
+	if wm.writer != nil {
+		if err := wm.writer.Flush(); err != nil {
+			return fmt.Errorf("flush before truncate: %w", err)
+		}
+	}
+	if err := wm.logFile.Truncate(0); err != nil {
+		return fmt.Errorf("truncate WAL: %w", err)
+	}
+	if _, err := wm.logFile.Seek(0, 0); err != nil {
+		return fmt.Errorf("seek WAL after truncate: %w", err)
+	}
+
+	wm.writer = bufio.NewWriterSize(wm.logFile, 64*1024)
+	wm.lsn = 0
+	wm.lastFlushedLSN = 0
+	wm.lastCheckpointLSN = 0
+	wm.txnLastLSN = make(map[uint64]uint64)
+	wm.activeTxns = make(map[uint64]bool)
+	wm.pageVersions = make(map[page.ResourcePageID]uint64)
+	wm.txnOperations = make(map[uint64][]RecoveryOperation)
+	wm.lastCheckpointDPT = make(DirtyPageTable)
+	wm.lastCheckpointATT = make(ActiveTransactionTable)
+
+	return nil
+}

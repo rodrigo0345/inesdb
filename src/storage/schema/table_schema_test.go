@@ -33,8 +33,10 @@ func TestTableManager_WritePropagation(t *testing.T) {
 	tm.CreateTable(ts, true)
 
 	// Mock data: id=1, age=25, name="Bob"
+	// Format: [0x01 _txn_op][null_flag_id=0][null_flag_age=0][null_flag_name=0][id][age][name]
 	payload := bytes.Join([][]byte{
-		{0x01}, // metadata
+		{0x01},              // _txn_op metadata
+		{0x00, 0x00, 0x00},  // null flags (3 user columns, all not null)
 		buildInt32(1),
 		buildInt32(25),
 		buildString("Bob"),
@@ -154,6 +156,12 @@ func buildRow(values ...interface{}) []byte {
 
 	buf.WriteByte(0x01)
 
+	// Null flags: one byte per column, all 0 (not null).
+	for range values {
+		buf.WriteByte(0x00)
+	}
+
+	// Column data.
 	for _, v := range values {
 		switch t := v.(type) {
 		case int32:

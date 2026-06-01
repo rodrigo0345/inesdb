@@ -227,17 +227,23 @@ func TestTableManager_ScanOptionsStacking(t *testing.T) {
 }
 
 func TestTableManager_ProjectionCorruption(t *testing.T) {
-	// Test the internal projection helper for malformed data
-	cols := []Column{{Name: "name", Type: TypeString}}
+	// Test the internal projection helper for malformed data.
+	// The function expects full schema columns including _txn_op as the first column.
+	cols := []Column{
+		{Name: TRANSACTIONAL_OP, Type: TypeMetadata},
+		{Name: "name", Type: TypeString},
+	}
 
-	// Value is too short to contain string length header (4 bytes)
-	_, err := extractProjectedColumns(cols, []byte{1, 2}, []string{"name"})
+	// Format: [0x01 _txn_op][null_flag_name=0][name_data...]
+	// Value is too short to contain string length header (needs dataStart=2 + 4 for string len).
+	// Providing only 2 bytes total: enough for dataStart but not for the string header.
+	_, err := extractProjectedColumns(cols, []byte{0x01, 0x00}, []string{"name"})
 	if err == nil {
 		t.Error("expected error for truncated string payload")
 	}
 
-	// Value says string is length 10, but only 2 bytes provided
-	corruptPayload := []byte{0, 0, 0, 10, 1, 2}
+	// Value says string is length 10, but only 2 data bytes provided.
+	corruptPayload := []byte{0x01, 0x00, 0, 0, 0, 10, 1, 2}
 	_, err = extractProjectedColumns(cols, corruptPayload, []string{"name"})
 	if err == nil {
 		t.Error("expected error for payload shorter than specified length")

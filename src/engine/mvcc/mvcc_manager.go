@@ -425,11 +425,13 @@ func (m *MVCCManager) Delete(txnID txn_unit.TransactionID, tableName, indexName 
 	meta.writtenUserKeys[string(key)] = struct{}{}
 	m.mu.Unlock()
 
-	meta.txn.RecordRecoveryOperation(tableName, log.DELETE, internalKey, nil)
+	// Record as PUT with the full tombstone payload so WAL replay can
+	// reconstruct the MVCC tombstone entry (not a raw LSM delete).
+	meta.txn.RecordRecoveryOperation(tableName, log.PUT, internalKey, payload)
 	if m.logManager != nil {
-		m.logManager.AddTransactionOperation(meta.txn.GetID(), tableName, log.DELETE, internalKey, nil)
+		m.logManager.AddTransactionOperation(meta.txn.GetID(), tableName, log.PUT, internalKey, payload)
 		if il, ok := m.logManager.(log.ReplicationIntentLogger); ok {
-			il.LogReplicationIntent(meta.txn.GetID(), tableName, log.DELETE, internalKey, nil)
+			il.LogReplicationIntent(meta.txn.GetID(), tableName, log.PUT, internalKey, payload)
 		}
 	}
 
@@ -703,4 +705,36 @@ func (m *MVCCManager) decodeKey(fullKey []byte) ([]byte, uint64, bool) {
 	txnID := ^inverted
 
 	return userKey, txnID, true
+}
+
+// RegisterAbortedTxns records a set of txnIDs as aborted so that isVisible()
+// returns false for their writes after a restart.  Called during recovery with
+// the set of txnIDs that were never committed before the previous shutdown.
+func (m *MVCCManager) RegisterAbortedTxns(abortedTxns map[uint64]bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for txnID := range abortedTxns {
+		id := txn_unit.TransactionID(txnID)
+		if _, exists := m.transactions[id]; !exists {
+			m.transactions[id] = &txnMeta{
+				txn:             txn_unit.NewTransaction(txnID, txn_unit.SERIALIZABLE),
+				status:          statusAborted,
+				writtenUserKeys: make(map[string]struct{}),
+			}
+		}
+	}
+}
+
+// SetNextTxnIDFloor advances nextTxnID to at least floor, preventing reuse of
+// transaction IDs that existed before a restart.
+func (m *MVCCManager) SetNextTxnIDFloor(floor int64) {
+	for {
+		cur := m.nextTxnID.Load()
+		if cur >= floor {
+			return
+		}
+		if m.nextTxnID.CompareAndSwap(cur, floor) {
+			return
+		}
+	}
 }

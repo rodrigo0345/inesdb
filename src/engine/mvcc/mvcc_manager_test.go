@@ -68,10 +68,13 @@ func setupMVCCWithRealTableManager(t *testing.T) (*MVCCManager, *schema.TableMan
 	return mvcc, tm
 }
 
-// Fixed: Adds the 0x01 metadata byte required by the TableSchema
+// buildTestRow encodes a test row in the current format:
+// [0x01 _txn_op][null_flag_id=0][null_flag_val=0][id: 4 bytes][val: 4 bytes]
 func buildTestRow(id, val int32) []byte {
 	buf := new(bytes.Buffer)
-	buf.WriteByte(0x01) // Metadata byte (_txn_op)
+	buf.WriteByte(0x01)  // _txn_op metadata byte
+	buf.WriteByte(0x00)  // null flag for id (not null)
+	buf.WriteByte(0x00)  // null flag for val (not null)
 	binary.Write(buf, schema.DbEndian, id)
 	binary.Write(buf, schema.DbEndian, val)
 	return buf.Bytes()

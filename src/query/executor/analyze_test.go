@@ -140,12 +140,15 @@ func TestTelemetry_ConflictRecording(t *testing.T) {
 	t1 := db.BeginTransaction(txn_unit.SERIALIZABLE)
 	t2 := db.BeginTransaction(txn_unit.SERIALIZABLE)
 
-	// Row format: [metadata=0x01][id=int32BE][val=int32BE]
+	// Row format: [0x01 _txn_op][null_id=0][null_val=0][id=int32LE][val=int32LE]
 	row := func(id, val int32) []byte {
-		b := [9]byte{0x01}
-		b[1] = byte(id >> 24); b[2] = byte(id >> 16); b[3] = byte(id >> 8); b[4] = byte(id)
-		b[5] = byte(val >> 24); b[6] = byte(val >> 16); b[7] = byte(val >> 8); b[8] = byte(val)
-		return b[:]
+		b := make([]byte, 11)
+		b[0] = 0x01                           // _txn_op
+		b[1] = 0x00                           // null flag for id (not null)
+		b[2] = 0x00                           // null flag for val (not null)
+		b[3] = byte(id); b[4] = byte(id >> 8); b[5] = byte(id >> 16); b[6] = byte(id >> 24)
+		b[7] = byte(val); b[8] = byte(val >> 8); b[9] = byte(val >> 16); b[10] = byte(val >> 24)
+		return b
 	}
 	key := []byte{0, 0, 0, 1}
 

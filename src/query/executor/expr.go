@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/ajitpratap0/GoSQLX/pkg/sql/ast"
@@ -19,12 +20,22 @@ func evalExpr(expr ast.Expression, row map[string]any) (any, error) {
 
 	switch node := expr.(type) {
 	case *ast.LiteralValue:
+		// GoSQLX uses Type="null" (lowercase) for the NULL literal.
+		if strings.EqualFold(node.Type, "null") {
+			return nil, nil
+		}
 		return ToNative(fmt.Sprintf("%v", node.Value), node.Type), nil
 
 	case *ast.Identifier:
+		// Try qualified lookup first (e.g. "u.id" for Identifier{Name:"id", Table:"u"}).
+		if node.Table != "" {
+			key := node.Table + "." + node.Name
+			if v, ok := row[key]; ok {
+				return v, nil
+			}
+		}
 		v, ok := row[node.Name]
 		if !ok {
-			// unknown column → nil
 			return nil, nil
 		}
 		return v, nil
@@ -49,8 +60,71 @@ func evalExpr(expr ast.Expression, row map[string]any) (any, error) {
 	case *ast.BetweenExpression:
 		return evalBetween(node, row)
 
+	case *ast.FunctionCall:
+		return evalFunction(node, row)
+
 	default:
 		return nil, fmt.Errorf("unsupported expression type %T", expr)
+	}
+}
+
+func evalFunction(node *ast.FunctionCall, row map[string]any) (any, error) {
+	switch strings.ToLower(node.Name) {
+	case "vec_dist":
+		return evalVecDist(node.Arguments, row)
+	default:
+		return nil, fmt.Errorf("unknown function %q", node.Name)
+	}
+}
+
+// evalVecDist computes the Euclidean distance between two vectors.
+// Signature: vec_dist(column, '[f1, f2, ...]')
+func evalVecDist(args []ast.Expression, row map[string]any) (any, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("vec_dist requires exactly 2 arguments, got %d", len(args))
+	}
+
+	leftRaw, err := evalExpr(args[0], row)
+	if err != nil {
+		return nil, fmt.Errorf("vec_dist left arg: %w", err)
+	}
+	rightRaw, err := evalExpr(args[1], row)
+	if err != nil {
+		return nil, fmt.Errorf("vec_dist right arg: %w", err)
+	}
+
+	left, err := toFloat32Slice(leftRaw)
+	if err != nil {
+		return nil, fmt.Errorf("vec_dist left: %w", err)
+	}
+	right, err := toFloat32Slice(rightRaw)
+	if err != nil {
+		return nil, fmt.Errorf("vec_dist right: %w", err)
+	}
+	if len(left) != len(right) {
+		return nil, fmt.Errorf("vec_dist: dimension mismatch: %d vs %d", len(left), len(right))
+	}
+
+	var sum float64
+	for i := range left {
+		d := float64(left[i]) - float64(right[i])
+		sum += d * d
+	}
+	return math.Sqrt(sum), nil
+}
+
+// toFloat32Slice converts a value to []float32.
+// Accepts []float32 directly, or a string literal like "[1.0, 2.0, 3.0]".
+func toFloat32Slice(v any) ([]float32, error) {
+	switch x := v.(type) {
+	case []float32:
+		return x, nil
+	case string:
+		return parseVectorLiteral(x)
+	case nil:
+		return nil, fmt.Errorf("NULL is not a valid vector")
+	default:
+		return nil, fmt.Errorf("cannot convert %T to []float32", v)
 	}
 }
 
@@ -67,15 +141,27 @@ func evalBinary(node *ast.BinaryExpression, row map[string]any) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		lb, lok := left.(bool)
-		rb, rok := right.(bool)
-		if !lok || !rok {
-			return nil, fmt.Errorf("AND/OR require boolean operands")
-		}
+		// NULL treated as false for AND/OR (safe approximation of SQL three-valued logic).
+		lb, _ := left.(bool)
+		rb, _ := right.(bool)
 		if op == "AND" {
 			return lb && rb, nil
 		}
 		return lb || rb, nil
+	}
+
+	// IS [NOT] NULL only needs the left operand.
+	// GoSQLX parses "IS NOT NULL" as {Op: "IS NULL", Not: true}.
+	if op == "IS NULL" {
+		leftVal, err := evalExpr(node.Left, row)
+		if err != nil {
+			return nil, err
+		}
+		isNull := leftVal == nil
+		if node.Not {
+			return !isNull, nil
+		}
+		return isNull, nil
 	}
 
 	// Arithmetic / comparison.
@@ -86,6 +172,11 @@ func evalBinary(node *ast.BinaryExpression, row map[string]any) (any, error) {
 	rightVal, err := evalExpr(node.Right, row)
 	if err != nil {
 		return nil, err
+	}
+
+	// NULL propagation: any arithmetic/comparison with NULL yields NULL (nil).
+	if leftVal == nil || rightVal == nil {
+		return nil, nil
 	}
 
 	switch op {

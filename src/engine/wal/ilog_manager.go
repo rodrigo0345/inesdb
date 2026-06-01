@@ -19,4 +19,9 @@ type ILogManager interface {
 	AddTransactionOperation(txnID uint64, tableName string, opType RecordType, key []byte, value []byte)
 	GetTransactionOperations(txnID uint64) []RecoveryOperation
 	CleanupTransactionOperations(txnID uint64)
+
+	// TruncateAndReset discards all WAL records and resets the log to empty.
+	// Call after a successful startup recovery to prevent replaying the same
+	// records on every subsequent restart.
+	TruncateAndReset() error
 }

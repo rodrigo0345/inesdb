@@ -89,6 +89,17 @@ func NewLSMTreeBackendWithDataDir(log log.ILogManager, buf buffer.IBufferPoolMan
 	return lsm
 }
 
+// FlushMemtable forces the in-memory memtable to be written to a new SSTable.
+// Use after WAL replay to make recovered data durable before truncating the WAL.
+func (l *LSMTreeBackend) FlushMemtable() {
+	l.memtableLock.Lock()
+	hasData := len(l.memtable.data) > 0
+	l.memtableLock.Unlock()
+	if hasData {
+		l.flush()
+	}
+}
+
 // Close gracefully shuts down the LSM backend, flushing any pending data
 func (l *LSMTreeBackend) Close() error {
 	applog.Info("[LSMClose] closing LSM backend")
