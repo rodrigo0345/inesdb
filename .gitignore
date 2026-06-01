@@ -1,6 +1,7 @@
 omag
 
 *.db
+db*
 *.wal
 **/*debug*
 .backup/
